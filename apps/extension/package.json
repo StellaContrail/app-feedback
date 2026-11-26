@@ -1,0 +1,22 @@
+{
+  "name": "@app-feedback/extension",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@app-feedback/shared": "workspace:*",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.1.30",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "esbuild": "^0.25.12",
+    "jsdom": "^26.1.0"
+  }
+}
