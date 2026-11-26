@@ -1,0 +1,26 @@
+{
+  "name": "app-feedback",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.9.0",
+  "scripts": {
+    "lint": "eslint . && prettier --check .",
+    "format": "prettier --write .",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test && node --test scripts/bootstrap.test.mjs",
+    "build": "pnpm -r build",
+    "test:browser": "pnpm --filter @app-feedback/extension build && node scripts/browser-smoke.mjs",
+    "demo": "node scripts/demo.mjs",
+    "test:permissions": "pnpm --filter @app-feedback/extension build && node scripts/browser-smoke.mjs --permissions"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/node": "^22.19.0",
+    "eslint": "^9.39.1",
+    "playwright-core": "^1.65.1",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.48.0",
+    "vitest": "~3.2.4"
+  }
+}

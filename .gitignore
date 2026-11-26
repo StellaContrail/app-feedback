@@ -7,3 +7,5 @@ dist/
 !.env.example
 *.log
 coverage/
+.local/
+bootstrap.local.sql

@@ -1,0 +1,23 @@
+{
+  "name": "@app-feedback/api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "bootstrap": "node scripts/bootstrap.mjs",
+    "migrate": "wrangler d1 migrations apply feedback --local"
+  },
+  "dependencies": {
+    "@app-feedback/shared": "workspace:*",
+    "hono": "^4.10.6",
+    "jose": "^6.2.18"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "~0.8.70",
+    "@cloudflare/workers-types": "4.20250906.0",
+    "wrangler": "4.35.0"
+  }
+}

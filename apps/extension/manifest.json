@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "App Feedback (local)",
+  "version": "0.1.0",
+  "description": "Private feedback for registered review pages.",
+  "permissions": ["activeTab", "scripting", "storage", "identity"],
+  "host_permissions": ["http://localhost/*", "http://127.0.0.1/*"],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'"
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAw2ZMGko57wu7Lmuljk0cRIBCnO3FEq9NzaMfBF3HY+H5/UAuSoEInw9OAClcPCsHdrfg5N+3jrQOvs29nd9Rz+rJj/VLgcfNt+ZpF9d3Frg/rSgqV4yz1PIsZ846aSzF1Hf91d8rktUYGiFIWCrj7EtS2eLJ21nCHf9z+uSWAPWFtZJC/3Xh90Pya0pcsJWdrkppT8n+mjzKUvRwWgRl6elsmBUJf3FmhYN0zAzAHI0GgSza4niIOALXJdstbpyyr82fvsfMTVeZI09Ibhnp2muOb5sypdWeiZup9+QfIQAL/DrHdG/pgRePT+a7biJLRKt7scpOcbfFausSgDPr9wIDAQAB"
+}
