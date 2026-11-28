@@ -4,3 +4,6 @@ dist
 .wrangler
 
 .local
+
+# Git 管理外の本番設定
+wrangler.private.jsonc

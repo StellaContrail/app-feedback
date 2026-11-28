@@ -1,40 +1,40 @@
-# Google login setup and acceptance
+# Google ログインの設定と受入確認
 
-A Google account is required. The popup signs in once and supports any HTTP(S) site without invitations, session/app IDs, nicknames or a fixed destination. All authenticated users share feedback for the same exact origin and normalized path. This is the user-selected sharing policy; the API does not verify the user's access to the reviewed site's own accounts.
+Google アカウントが必要です。ポップアップで一度ログインすれば、招待、セッション・アプリ ID、ニックネーム、固定の遷移先なしで任意の HTTP(S) サイトを利用できます。認証済みの全ユーザーが、完全一致するオリジンと正規化パスごとにフィードバックを共有します。これはユーザーが選択した共有方針です。API はレビュー対象サイトのアカウントに対する利用者のアクセス権を検証しません。
 
-## Configure Google and the local API
+## Google とローカル API の設定
 
-1. In [Google Auth Platform](https://console.cloud.google.com/auth/clients), select/create your project and configure branding/audience. When using testing mode, add the Google accounts that will test the app.
-2. Create an OAuth client of type **Web application**. The server exchanges authorization codes; the secret must not be distributed with the extension.
-3. Load `apps/extension/dist` unpacked and note its extension ID. Register exactly `https://<extension-id>.chromiumapp.org/google` under the client's authorized redirect URIs. The committed manifest public key fixes the development ID to `ijagaijpoccamffckkbfppnilhpblekc`, including when the build is copied to Windows. Register `https://ijagaijpoccamffckkbfppnilhpblekc.chromiumapp.org/google` and allow `chrome-extension://ijagaijpoccamffckkbfppnilhpblekc` in `EXTENSION_ORIGINS`. The public key is not an OAuth secret. Restart the local API after changing `.dev.vars`.
-4. Add these lines to `apps/api/.dev.vars`, retaining the exact `EXTENSION_ORIGINS` allowlist:
+1. [Google Auth Platform](https://console.cloud.google.com/auth/clients) でプロジェクトを選択・作成し、ブランディングと対象ユーザーを設定します。テストモードでは、テストに使用する Google アカウントを追加します。
+2. 種類が **ウェブ アプリケーション（Web application）** の OAuth クライアントを作成します。認可コードの交換はサーバーが行うため、シークレットを拡張機能とともに配布してはいけません。
+3. `apps/extension/dist` をパッケージ化されていない拡張機能として読み込み、拡張 ID を確認します。クライアントの承認済みリダイレクト URI に `https://<extension-id>.chromiumapp.org/google` を正確に登録します。コミット済み manifest の公開鍵により、Windows にビルドをコピーした場合も開発用 ID は `ijagaijpoccamffckkbfppnilhpblekc` に固定されます。`https://ijagaijpoccamffckkbfppnilhpblekc.chromiumapp.org/google` を登録し、`EXTENSION_ORIGINS` で `chrome-extension://ijagaijpoccamffckkbfppnilhpblekc` を許可します。公開鍵は OAuth シークレットではありません。`.dev.vars` を変更したらローカル API を再起動します。
+4. `apps/api/.dev.vars` に次を追加します。`EXTENSION_ORIGINS` の完全一致の許可リストは維持します。
 
    ```dotenv
    GOOGLE_CLIENT_ID="<web-application-client-id>.apps.googleusercontent.com"
    GOOGLE_CLIENT_SECRET="<server-only-secret>"
    ```
 
-   Do not paste the secret into chat or commit it. Future production configuration must use Worker secrets. No production deployment is authorized here.
+   シークレットをチャットに貼ったり、コミットしたりしないでください。本番設定には Worker secrets を使用する必要があります。この手順は本番デプロイを承認するものではありません。
 
-5. After editing `.dev.vars`, restart the local API so the new OAuth values are loaded; an API process started before the change can still report `AUTH_NOT_CONFIGURED`. Run `pnpm --filter @app-feedback/api migrate`, build the extension, and restart/reload it so the new `identity` permission and login code are loaded. Start the local API as described in README. Old session participant tokens cannot authorize site sharing; sign in again. Saved private session comments remain in legacy tables and are not automatically published to the new shared tables. No bootstrap or `DEFAULT_SESSION_ID` / `DEFAULT_APP_ID` configuration is needed.
-6. Click **Googleでログイン**. Complete Google account selection/consent yourself. Google passwords and second factors are entered only on Google's own pages. Once joined, **コメントを開く** returns to the ordinary review flow.
+5. `.dev.vars` の編集後はローカル API を再起動し、新しい OAuth 設定を読み込ませます。変更前から動いている API は `AUTH_NOT_CONFIGURED` を返し続ける場合があります。`pnpm --filter @app-feedback/api migrate` を実行して拡張機能をビルドし、再起動・再読み込みで新しい `identity` 権限とログインコードを反映します。README に従いローカル API を起動します。旧セッションの参加者トークンではサイト共有を認可できないため、再ログインしてください。保存済みのプライベートセッションのコメントは旧テーブルに残り、新しい共有テーブルへ自動公開されません。初期データ生成や `DEFAULT_SESSION_ID` / `DEFAULT_APP_ID` の設定は不要です。
+6. **Googleでログイン** を押し、自分でアカウント選択・同意を完了します。Google のパスワードや二要素認証は Google 自身のページだけで入力します。ログイン後は **コメントを開く** から通常のレビュー操作に進めます。
 
-## Security and privacy
+## セキュリティとプライバシー
 
-The extension generates a 256-bit PKCE verifier in memory and uses `chrome.identity.getRedirectURL('google')` / `launchWebAuthFlow`. A five-minute server flow binds the allowed redirect, state, nonce and S256 challenge, independently of any site or session. State and nonce are hashed at rest. Callback origin/path, state and duplicate parameters are checked before the returned code is sent to the API. Consuming the flow is atomic and prevents replay.
+拡張機能はメモリ内で256ビットの PKCE verifier を生成し、`chrome.identity.getRedirectURL('google')` / `launchWebAuthFlow` を使用します。サーバーの5分間のフローが、許可済みリダイレクト、state、nonce、S256 challenge をサイト・セッションとは独立に紐付けます。state と nonce はハッシュ化して保存します。返されたコードを API に送る前に、コールバックのオリジン・パス、state、重複パラメーターを検証します。フローはアトミックに消費し、再利用を防ぎます。
 
-Only the API exchanges the code, using a fixed Google token endpoint and the server-only client secret. Redirect responses are not followed with that secret. `jose` verifies the ID token with Google's fixed public-key endpoint, allowing only RS256 and checking issuer, exact client audience/presenter, issued/expiry times and nonce. Client claims/roles never establish Google identity.
+コードを交換するのは API のみで、固定の Google トークンエンドポイントとサーバー専用クライアントシークレットを使います。そのシークレットを伴うリクエストではリダイレクトを追跡しません。`jose` が Google の固定公開鍵エンドポイントで ID トークンを検証します。RS256 だけを許可し、発行者、クライアントの audience・presenter の完全一致、発行・有効期限、nonce を確認します。クライアントの申告やロールで Google の本人確認を成立させません。
 
-Scope is `openid profile`; the display name comes from the signed Google `name` claim, bounded to 80 characters. Missing/empty names use `Googleユーザー`. No userinfo endpoint or extra Google request is needed. Google email/profile photos/access/refresh/ID tokens are not stored. The database retains a hash of the Google subject. Content scripts never receive Google credentials or app bearer tokens. After verification, site-sharing app tokens last 24 hours. Site data has no event/session expiry. Signing out of Google elsewhere does not immediately revoke an already issued app session; **ログアウト** revokes the app token when the API is reachable. If offline, local credentials are cleared and server expiry still bounds the token.
+スコープは `openid profile` です。表示名は署名された Google の `name` クレームに基づき、80文字までに制限します。名前がない・空の場合は `Googleユーザー` とします。userinfo エンドポイントや Google への追加リクエストは不要です。Google のメールアドレス、プロフィール写真、アクセス・リフレッシュ・ID トークンは保存しません。データベースには Google subject のハッシュを保持します。コンテンツスクリプトに Google 認証情報やアプリの Bearer トークンを渡しません。検証後に発行するサイト共有用アプリトークンの有効期間は24時間です。サイトデータにはイベント・セッションの期限がありません。別の場所で Google からログアウトしても、発行済みアプリセッションは直ちには失効しません。**ログアウト** は API に接続できる場合にアプリトークンを失効させます。オフラインの場合はローカル認証情報を消去し、サーバー側では通常の有効期限が適用されます。
 
-The site login endpoints explicitly allow any Google-authenticated account to review any site. Google audience/test-user restrictions still apply. Missing OAuth configuration fails closed with 503. CORS and a hidden API URL are not an account allowlist. The server derives origin and normalized route from validated URLs; no site ID, role or ownership claim from a client grants extra privileges. The extension sends no reviewed page URL during login. Legacy invitation endpoints remain isolated for old private session access; neither their tokens nor old comments enter site sharing.
+サイトのログインエンドポイントは、Google 認証済みの任意のアカウントによる任意サイトのレビューを明示的に許可します。Google 側の対象ユーザー・テストユーザー制限は引き続き適用されます。OAuth 設定がない場合は503でアクセスを拒否します。CORS や API URL の非公開化はアカウントの許可リストにはなりません。サーバーは検証済み URL からオリジンと正規化ルートを導出し、クライアントが申告するサイト ID、ロール、所有権で追加権限を与えません。ログイン時、拡張機能はレビュー対象のページ URL を送信しません。旧招待エンドポイントは従来のプライベートセッション用に分離して残し、そのトークンも旧コメントもサイト共有には持ち込みません。
 
-## Verification boundaries
+## 検証の範囲
 
-`pnpm test` verifies signed test ID tokens and failure cases against real D1 in Workers, with all Google network requests mocked. Client tests exercise state/redirect/PKCE/cancellation handling. `pnpm test:browser` and `pnpm test:permissions` seed already-authenticated app participants in a temporary database and trusted extension storage; this is test setup, not a production login-bypass route/flag. They verify the review UI and permissions after authentication. Neither is evidence of a real Google login.
+`pnpm test` は Google への全通信をモックし、署名付きテスト ID トークンと異常系を Workers 内の実 D1 で検証します。クライアントのテストは state・リダイレクト・PKCE・キャンセル処理を検証します。`pnpm test:browser` と `pnpm test:permissions` は、認証済みアプリ参加者を一時データベースと信頼済み拡張機能ストレージに投入します。これはテスト準備であり、本番のログイン回避ルート・フラグではありません。認証後のレビュー UI と権限を検証しますが、実際の Google ログインの証拠にはなりません。
 
-The real-account acceptance is: cancel once and remain unjoined; complete Google consent with no settings input, see the Google account name; see previous comments; post a comment; log out, see the login screen, verify the old app token no longer works, and log in again without losing comments. If Google rejects an automated test browser, use ordinary desktop Chrome with the unpacked extension and the registered ID; do not weaken Google's login protections. No screenshot of account/consent pages is required or captured.
+実アカウントでの受入確認: 一度キャンセルして未参加のままであること、設定入力なしで Google 同意を完了してアカウント名が表示されること、既存コメントを閲覧できること、コメントを投稿できること、ログアウトしてログイン画面に戻ること、旧アプリトークンが無効になること、再ログインしてもコメントが失われないことを確認します。Google が自動テスト用ブラウザーを拒否する場合は、登録済み ID のパッケージ化されていない拡張機能を通常のデスクトップ版 Chrome で使用してください。Google のログイン保護を弱めないでください。アカウント・同意画面のスクリーンショットは不要で、取得もしません。
 
-Sources: [Google OpenID Connect server flow and token validation](https://developers.google.com/identity/openid-connect/openid-connect), [Google PKCE verifier/challenge guidance](https://developers.google.com/identity/protocols/oauth2/native-app), [Chrome Identity API and redirect URLs](https://developer.chrome.com/docs/extensions/reference/api/identity).
+参考資料: [Google OpenID Connect のサーバーフローとトークン検証](https://developers.google.com/identity/openid-connect/openid-connect)、[Google の PKCE verifier・challenge の説明](https://developers.google.com/identity/protocols/oauth2/native-app)、[Chrome Identity API とリダイレクト URL](https://developer.chrome.com/docs/extensions/reference/api/identity)。
 
-Windows Chrome login was confirmed by the user before the site-sharing update. The updated site-sharing login, account-name and logout/relogin flow remains a human acceptance check. Windows copies need an extension reload after rebuilding/copying `dist`; the manifest key keeps the registered redirect stable.
+Windows へのコピーでは、`dist` の再ビルド・コピー後に拡張機能を再読み込みしてください。manifest の key により登録済みリダイレクトは維持されます。

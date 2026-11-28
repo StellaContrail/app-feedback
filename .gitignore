@@ -9,3 +9,8 @@ dist/
 coverage/
 .local/
 bootstrap.local.sql
+
+# ローカルの認証情報と本番設定
+.dev.vars.*
+!.dev.vars.example
+wrangler.private.jsonc

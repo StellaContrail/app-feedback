@@ -1,17 +1,20 @@
-# Codex instructions
+# Codex 向け指示
 
-Implement app-feedback: a privacy-conscious Chrome MV3 extension and Cloudflare Workers backend for small friend-group app-review events.
+app-feedback を実装してください。プライバシーに配慮した Chrome MV3 拡張機能と Cloudflare Workers バックエンドで、少人数の友人グループによるアプリレビュー会を支援します。
 
-Read README.md and docs/implementation-plan.md first. Work in incremental, independently testable PRs. **Begin with milestone 1 only.**
+最初に README.md と docs/implementation-plan.md を読んでください。段階的に、独立してテストできる PR 単位で進めてください。**まずはマイルストーン1のみを対象としてください。**
 
-- TypeScript strict across packages; Hono + D1, optional R2 only in later milestone.
-- MV3: activeTab + scripting on user action. Avoid broad host permissions; isolated Shadow DOM UI. Escape exits selection.
-- No OpenAI API or AI feature in MVP.
-- Do not deploy, create cloud resources, publish extension, or open additional PRs without approval.
-- Zod validation, parameterized SQL, server-side authorization on all read/write endpoints.
-- Never persist outerHTML, form input values, cookies, auth headers, or the whole DOM.
-- Bind feedback to registered page origin and normalized route. Never trust client-supplied roles.
-- Screenshots are out of scope until explicit approval.
-- Favor expiring opaque participant tokens, hashed at rest; don't log invite codes or tokens.
-- Test lint, typecheck, unit/integration tests. Include D1 integration coverage in Workers runtime.
-- Document setup and limitations. Report changed files, test results, risks, next acceptance criterion after each task.
+- 全パッケージで TypeScript の strict を有効にします。Hono + D1 を使用し、任意の R2 対応は後のマイルストーンに限定します。
+- MV3: ユーザー操作を契機に activeTab + scripting を使用します。広範なホスト権限を避け、Shadow DOM で UI を分離します。Escape で選択を終了します。
+- MVP に OpenAI API や AI 機能を含めないでください。
+- 承認なしにデプロイ、クラウドリソースの作成、拡張機能の公開、追加の PR 作成を行わないでください。
+- Zod による検証、パラメーター化 SQL、全読み書きエンドポイントでのサーバー側認可を必須とします。
+- outerHTML、フォーム入力値、Cookie、認証ヘッダー、DOM 全体を永続化しないでください。
+- フィードバックを登録済みページのオリジンと正規化ルートに紐付けます。クライアントが送信したロールを信頼しないでください。
+- 明示的な承認があるまで、スクリーンショットは対象外です。
+- 有効期限付きの不透明な参加者トークンを優先し、保存時はハッシュ化します。招待コードやトークンをログに記録しないでください。
+- lint、型チェック、単体・統合テストを実施します。Workers ランタイムでの D1 統合テストを含めてください。
+- ドキュメントには、今後も参照する必要があり、非自明な内容だけを残します。作業履歴、一般的な操作説明、重複記述は残さず、現在の判断に必要な設計理由・制約・固有の設定を記載します。
+- セットアップと制約を文書化します。各タスクの完了時に、変更ファイル、テスト結果、リスク、次の受入基準を報告してください。
+
+公開するファイルに、本番 API の接続先、実際のクラウドリソース ID、個人メールアドレスを含めないでください。本番設定は Git 管理外の `apps/api/wrangler.private.jsonc` で管理し、共有する設定には例示値を使います。

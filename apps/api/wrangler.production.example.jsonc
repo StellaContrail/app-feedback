@@ -1,11 +1,12 @@
 {
-  // Production D1 binding. OAuth credentials are stored as Worker secrets.
+  // 本番設定のひな形。コピー後に D1 ID と拡張機能の許可リストを設定します。
+  // OAuth 認証情報は Worker secrets で管理します。
   "name": "app-feedback",
   "main": "src/index.ts",
   "compatibility_date": "2025-09-06",
   "workers_dev": true,
   "vars": {
-    "EXTENSION_ORIGINS": "chrome-extension://ijagaijpoccamffckkbfppnilhpblekc",
+    "EXTENSION_ORIGINS": "",
   },
   "d1_databases": [
     {

@@ -1,30 +1,20 @@
 # app-feedback
 
-A privacy-conscious Chrome MV3 extension and Cloudflare Worker/D1 API for site-based reviews. Milestone 1 provides Google sign-in, element selection, comments, and shared numbered pins. There is no dashboard, AI, screenshot capture, R2, automatic deployment workflow, or public distribution.
+Chrome MV3 拡張機能と Cloudflare Workers / D1 による、ページ要素に紐付けたフィードバック共有ツールです。Google ログイン後、任意の HTTP(S) サイトで要素を選択し、コメントと番号付きピンを共有できます。管理画面、AI、スクリーンショット、R2、拡張機能の一般公開は対象外です。
 
-Production API: https://api.example.com (Google authentication required for feedback).
+## 共有範囲と保存データ
 
-For server hosting, see [Cloudflare Workers + D1 setup](docs/server-setup.md). A separate production configuration and an HTTPS API extension build are available; resource creation and deployment require approval.
+**同じ API にログインした全ユーザーが、同じサイト・ページのコメントを共有します。** サイトの所有権や、そのサイトへのアクセス権は検証しません。ログインが必要なページでも共有範囲は変わりません。コメント、表示テキスト、パスには、共有してよい内容だけを含めてください。
 
-## Workspace
+サイトはスキーム・ホスト名・ポートの完全一致で区別し、最初の投稿時に作成します。空の一覧を読むだけでは作成しません。ページは正規化パスで区別し、クエリとフラグメントは送信・保存しません。`/app/` と `/app` は同じページです。ハッシュやクエリで画面を切り替えるアプリには対応しません。
 
-- `packages/shared`: strict Zod schemas, route normalization and types.
-- `apps/api`: Hono Worker, D1 migrations, local bootstrap and Workers-runtime integration tests.
-- `apps/extension`: React login popup, isolated content UI and background API transport.
-- `scripts/browser-smoke.mjs`: local two-profile Chrome acceptance smoke.
+保存する対象情報は位置ベースのセレクター、タグ、直接のテキスト最大120文字、ビューポートに対する相対矩形です。DOM 全体、HTML、属性値、フォーム値、Cookie、ページの認証ヘッダーは取得・保存しません。フォーム、編集可能・非公開・非表示領域とその子孫は選択対象外です。機密領域には `data-private` を指定してください。ただし、通常の表示テキストやユーザーが書くコメントに個人情報が含まれる可能性はあります。
 
-## Google sign-in
+Google 認証では `openid profile` を要求します。D1 に Google subject のハッシュと表示名を保存し、表示名はほかのログイン済みユーザーの一覧・ピン詳細に表示します。メール、写真、Google トークンは保存しません。アプリトークンの有効期間は24時間で、ハッシュ化して保存します。ログアウトはコメントを保持してトークンを失効させます。オフライン時はローカル認証情報だけを消去し、サーバーでは通常の期限が適用されます。Chrome 自体の Google ログイン状態は変えません。
 
-Google login is required before a participant token is issued. Open any HTTP(S) site and click the extension to view or write feedback. Sites are identified by their exact origin (scheme, hostname and port); feedback is separated by normalized pathname. All Google-authenticated users of the same API share feedback for the same site/page, subject to Google's audience/test-user restrictions. There are no events, invitations, registered base paths or fixed login destinations in the current flow. `DEFAULT_SESSION_ID` and `DEFAULT_APP_ID` are no longer used. The extension connects to a fixed API (`http://localhost:8787` by default).
+## ローカルセットアップ
 
-Sites are created automatically on the first comment, not on an empty read. This is shared feedback, including for pages behind a site's own login: the API does not verify site ownership or the user's access to that site. Comments, saved target text and paths must be suitable for sharing with all app-feedback users. The popup and composer state that sharing scope.
-The extension uses `chrome.identity.launchWebAuthFlow` with authorization code, S256 PKCE, state and nonce. The Worker exchanges the code and validates the Google ID token. It requests `openid profile` and uses the signed Google account name for display; missing names fall back to `Googleユーザー`. Names are bounded to 80 characters and never authorize access. Google tokens, email addresses and photos are not stored. D1 retains a hashed Google subject plus the account display name. That display name appears alongside the author’s comments and in pin details for other signed-in users. Logout revokes the app token, clears local credentials and enabled comment panels, and returns to the login screen. It does not sign Chrome out of Google.
-
-Create a **Web application** OAuth client in Google Auth Platform. For every allowed extension ID, register `https://<extension-id>.chromiumapp.org/google` as an authorized redirect URI. Configure branding/audience and test users when the consent screen is in testing. Keep the client secret in the API's ignored `.dev.vars`, never the extension bundle or chat. See [Google login setup](docs/google-login.md). Missing configuration fails closed with 503; there is no anonymous/development auth bypass. Existing event/session tokens require a fresh Google login for site sharing. Legacy comments remain private in the old tables; migration does not automatically publish them.
-
-## Local setup
-
-Use Node.js 22 LTS and pnpm 10.9.0. All commands below run from the repository root. No Cloudflare account or cloud resource is needed. Wrangler and the test pool are pinned together for runtime compatibility; install from the committed lockfile.
+Node.js 22 LTS、pnpm 10.9.0 を使用し、リポジトリのルートで実行します。Wrangler とテストプールは互換性のため固定しているので、ロックファイルを使用してください。ローカル実行に Cloudflare アカウントは不要ですが、Google OAuth の設定は必須です。
 
 ```sh
 pnpm install --frozen-lockfile
@@ -32,89 +22,72 @@ pnpm --filter @app-feedback/api migrate
 pnpm --filter @app-feedback/extension build
 ```
 
-No bootstrap or app URL registration is needed. The legacy bootstrap script remains only for old invitation-based API compatibility. New Google tokens last 24 hours and have no event/session expiry. Apply all migrations, including `0004_site_sharing.sql`, before starting the updated API.
+`apps/extension/dist` を Chrome の `chrome://extensions` から開発者モードで読み込みます。[Google ログイン設定](docs/google-login.md)に従い、`apps/api/.dev.vars` を用意してください。
 
-1. In **two separate desktop Chrome profiles**, visit `chrome://extensions`, enable Developer mode and load unpacked `apps/extension/dist`.
-2. Copy each extension ID from that page. In `apps/api/.dev.vars` set the explicit allowlist (comma separated, no wildcard):
+```dotenv
+EXTENSION_ORIGINS="chrome-extension://<extension-id>"
+GOOGLE_CLIENT_ID="<web-application-client-id>.apps.googleusercontent.com"
+GOOGLE_CLIENT_SECRET="<server-only-client-secret>"
+```
 
-   ```dotenv
-   EXTENSION_ORIGINS="chrome-extension://<profile-A-extension-id>,chrome-extension://<profile-B-extension-id>"
-   GOOGLE_CLIENT_ID="<web-application-client-id>.apps.googleusercontent.com"
-   GOOGLE_CLIENT_SECRET="<server-only-client-secret>"
-   ```
+許可リストは完全一致・カンマ区切りで、ワイルドカードは使えません。シークレットを拡張機能やリポジトリに含めないでください。`.dev.vars` の変更後は API を再起動します。
 
-3. Start the local API:
+```sh
+pnpm --filter @app-feedback/api dev --ip 127.0.0.1 --port 8787
+# テスト用ページが必要な場合だけ起動: http://localhost:4173/app
+pnpm demo
+```
 
-   ```sh
-   pnpm --filter @app-feedback/api dev --ip 127.0.0.1 --port 8787
-   ```
+レビュー対象アプリは別途起動する必要があります。アプリ URL の登録や初期データ生成は不要です。`0004_site_sharing.sql` を含む全マイグレーションを適用してください。旧セッショントークンは使えず、Google での再ログインが必要です。旧プライベートコメントは別テーブルに残り、自動公開されません。`DEFAULT_SESSION_ID` と `DEFAULT_APP_ID` は使用しません。
 
-4. Open any HTTP(S) site you want to review. The app is your own separately running HTTP(S) app; this repository does not start it. A minimal local fixture is available for testing:
+本番 API の接続先は Git 管理外の環境設定で管理します。本番接続用ビルドと運用手順は[サーバー設定](docs/server-setup.md)を参照してください。リソース作成・デプロイには承認が必要です。
 
-   ```sh
-   pnpm demo
-   # Open http://localhost:4173/app for this fixture.
-   ```
+## 拡張機能固有の挙動
 
-5. In profile A, open the extension and click **Googleでログイン**. Complete Google account selection/consent. No participation settings are required. The signed-in screen shows the Google account name and **コメントを開く**. On the chosen page, open comments and choose **＋ コメントを書く**, select an element, enter a comment and click **投稿する**. Choose a category with the three visible buttons (不具合 / 提案 / よかった点); 提案 is selected by default. Pins keep their numbers and use red / purple / green for those categories. Comment lists and pin details show the author’s Google display name, supplied by the server; no email or Google subject is returned.
-6. In B, log in with another Google account and choose **コメントを開く** once on the same page. B sees the feedback and pins. The same tab restores viewing mode after same-origin navigation/reload/back without another popup click; refresh is every 15 seconds. Only **＋ コメントを書く** begins click-blocking selection.
-7. Escape/**キャンセル** cancels selection while keeping comments visible. The panel's **×** or popup's **このタブの表示をやめる** stops this tab's automatic restoration. The **ログアウト** icon to the right of the account name hides all enabled panels and returns to **Googleでログイン**. Re-login preserves saved comments. Browser/extension restart requires login again. New tabs are never enabled automatically.
+- **コメントを開く** は閲覧モードです。**＋ コメントを書く** を押したときだけ要素選択を開始し、選択対象のクリックによる遷移・送信を抑止します。種類は 不具合 / 提案 / よかった点（赤 / 紫 / 緑）で、初期選択は 提案 です。Escape・キャンセルで選択を終了し、コメント表示を残します。
+- 明示的に有効にしたタブだけ、同一オリジンの再読み込み・遷移・戻るで閲覧を復元します。パネルの × または **このタブの表示をやめる** で復元を無効にします。新規タブは自動で有効にしません。ブラウザー・拡張機能の再起動後は再ログインが必要です。
+- API のホスト権限と `activeTab`、`scripting`、`storage`、ログイン用 `identity` を使用します。レビュー対象の全サイトへの権限や自動コンテンツスクリプトはありません。非ループバックサイトは、そのページでのツールバー操作により `activeTab` を許可します。別オリジンへの遷移で許可が失効し、戻っても再操作が必要な場合があります。
+- API はビルド時に固定し、レビュー対象ページやメッセージから決めません。既定は `http://localhost:8787`、開発用ホスト権限は `localhost` / `127.0.0.1` だけです。トークンは信頼済み拡張コンテキスト限定のセッションストレージに置き、コンテンツスクリプトには渡しません。タブの復元設定にはオリジン、API、ログインを識別するハッシュだけを保存します。挿入前には認証状態と現在のタブ URL を確認します。
+- 一覧のコメントは対象へスクロール・強調表示し、ピンは詳細を開きます。対象のリンク・ボタンは作動させません。対象が不明なら一覧に残し、位置を推測しません。下書き中はコメント閲覧操作を無効にして下書きを保持します。コメントは15秒ごとに更新します。
+- **一覧をコピー** は現在の正規化ページと読み込み済み最大500件を JSON にします。番号、種類、本文、時刻、保存済みセレクター・タグ・抜粋を含み、投稿者名、Google アカウント情報、認証情報、追加の DOM は含めません。HTTPS または localhost とブラウザーの許可・フォーカスが必要で、失敗時はパネルに表示します。クリップボード読み取りや追加権限は要求しません。[Clipboard API の要件](https://developer.mozilla.org/en-US/docs/Web/API/Clipboard/writeText)も参照してください。
+- ログイン後の **この拡張機能にフィードバック** は、入力文（最大500文字）と拡張機能バージョンだけを付けて、このリポジトリの GitHub Issue 編集画面を開きます。GitHub アカウントとユーザーによる最終送信が必要で、Issue は公開されます。ページ URL、レビュー、Google 名、認証情報、画像、ログは添付しません。下書きはポップアップを閉じると失われ、D1・拡張ストレージに保存しません。GitHub トークンや自動 Issue 作成は使用しません。
 
-Restart the local API after changing `.dev.vars`. For Cloudflare hosting, use the separate production configuration and HTTPS extension build in [server setup](docs/server-setup.md), configure D1 and Google server secrets. No deployment or cloud resources are created by these build commands.
-Clicking a comment in the page panel scrolls its saved target into view and highlights it, without activating the underlying link/button. Clicking a numbered page pin opens a nearby comment detail card; close it with × or Escape. The selected highlight follows scrolling and layout changes. An offscreen target can be reached from the list; a missing/changed target stays in the list without a guessed jump. Comment browsing is disabled while composing a draft so the draft is retained.
-
-**一覧をコピー** copies the currently loaded page's feedback as readable JSON: normalized page URL, comment numbers, categories, bodies, timestamps and saved target selectors/tag/text snippets. It does not inspect additional page content, include auth/session credentials, contact an AI, or copy feedback from other routes. Comments are user-provided data. The list is capped at the latest 500 comments by the API. Clipboard copying uses a direct user click and requires HTTPS or localhost plus browser permission/focus; failure is shown in the panel. No clipboard-reading or additional extension permission is requested. See [Clipboard API requirements](https://developer.mozilla.org/en-US/docs/Web/API/Clipboard/writeText).
-
-Restoration is limited to the explicitly enabled tab, origin, API and current login. Before every injection the background worker checks authenticated API access and the live tab URL. Tab settings contain the origin, API and a hash identifying the current login, never raw tokens or page text; tokens stay in trusted session storage. Chrome's existing permissions remain authoritative: after visiting a different origin, a non-loopback site's activeTab grant is revoked and returning may require a new toolbar click. No extra host permission or all-sites access is requested. An explicitly hidden tab stays hidden after reload; closing the tab removes its restoration setting.
-
-The default development build uses HTTP loopback (`localhost` / `127.0.0.1`). A server build pins requests and host permissions to the HTTPS API origin provided through `APP_FEEDBACK_API_ORIGIN`. The default manifest grants only loopback host permissions for the local API plus `activeTab`, `scripting` and `storage`; there are no default permissions for arbitrary review sites or automatic content scripts. To inspect a non-loopback app, click the toolbar popup on that page to grant `activeTab`. The configured API is never derived from the reviewed page or its messages.
-
-## Feedback about the extension itself
-
-After Google login, open the popup's **この拡張機能にフィードバック**, write up to 500 characters and choose **GitHubで確認する**. It opens a prefilled Issue editor in [StellaContrail/app-feedback](https://github.com/StellaContrail/app-feedback/issues). Review the content and submit on GitHub yourself; a GitHub account is required and submitted Issues are public. The entry is hidden while signed out or loading and disappears on logout. This is an in-app visibility rule; GitHub separately requires its own login for posting.
-
-Only the typed text and installed extension version are placed in the GitHub URL. The extension does not attach the current page URL, saved reviews, Google name, credentials, screenshots or logs. The draft stays in popup memory and is lost when the popup closes; it is not saved to D1 or extension storage. No GitHub token, backend endpoint or extra extension permission is required. This uses [GitHub's Issue URL parameters](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/creating-an-issue). It does not create an Issue until the user submits on GitHub, and normal website comments remain in app-feedback.
-
-## Verification
+## 検証
 
 ```sh
 pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build
-# Optional: requires local Chrome with CDP Extensions.loadUnpacked support.
-# CHROME_PATH may override /usr/bin/google-chrome.
+# 任意: ローカル Chrome の CDP Extensions.loadUnpacked が必要
+# CHROME_PATH で /usr/bin/google-chrome を変更可能
 pnpm test:browser
-# Optional Linux/Xvfb native extension-action permission coverage.
+# 任意: Linux / Xvfb でネイティブアクションの権限を検証
 pnpm test:permissions
 ```
 
-`pnpm test` includes bootstrap credential-file tests, unit/DOM tests and real SQLite/D1 migrations and requests inside the Cloudflare Workers runtime, with isolated test storage. `pnpm build` only bundles the extension and performs a Worker **dry run**. CI runs these checks without credentials or deployment. Some sandbox environments require permission to spawn workerd/Chrome and bind loopback ports.
+`pnpm test` は単体・DOM・初期データ生成の認証情報ファイルテストに加え、Workers ランタイム内の実 SQLite / D1 でマイグレーションと API を検証します。ストレージはテストごとに分離します。`pnpm build` は拡張機能のビルドと Worker のドライランのみで、CI も認証情報やデプロイを必要としません。一部のサンドボックスでは workerd / Chrome の起動とループバックのポート使用に許可が必要です。
 
-The optional smoke starts a local fixture and Worker, migrates an isolated temporary D1 database and opens two temporary Chrome profiles. It seeds already Google-associated app sessions directly into its temporary D1 database and trusted extension storage, then verifies A posting without submitting the selected form, B seeing a pin after automatic reload/back restoration, arbitrary same-origin path support, explicit-hide persistence, joined-popup simplification, stale selector fallback, double injection, removed-host cleanup, closed Shadow DOM/CSS isolation, SPA route isolation, Escape and absence of password/token data from feedback storage. It deletes its own temporary profiles/database at exit. It uses DevTools to operate the closed shadow UI, takes no screenshots and publishes nothing. Real Google account selection/consent is not exercised by that seeded-session UI smoke; OAuth signatures/state/PKCE and failure cases are covered in the Worker and extension tests with generated test keys and mocked Google responses. There is no auth-bypass endpoint or runtime flag in the application. The fixture is covered by loopback host permission, so this smoke **does not verify toolbar-granted activeTab on a non-loopback site**.
+ブラウザーテストは一時 D1・2つの一時 Chrome プロファイルに Google 認証済み参加者を投入し、投稿・ピン共有・ルート分離・復元・明示的な非表示・セレクター劣化・二重挿入・ホスト削除・CSS 分離・Escape・機密データ非保存を検証します。終了時に一時データを削除し、スクリーンショットや公開は行いません。実際の Google 同意は検証せず、署名・state・PKCE・異常系は生成鍵と Google 応答のモックで検証します。製品に認証回避用エンドポイント・フラグはありません。
 
-`pnpm test:permissions` additionally tests an origin **outside the extension's host permissions**: `review.test` resolves to the loopback fixture only inside the temporary Chrome processes. Both reviewers must fail injection before a native extension action. A test-only `Ctrl+Shift+Y` action shortcut is added to a temporary copy of the built manifest (no permission is added); XTest executes that action on a window matching both the browser PID and a random fixture title. The suite then checks real action-granted activeTab, A→D1→B, same-origin SPA/reload retention, and revocation after cross-origin navigation and return. Injection after the grant still uses a trusted extension popup-page message; the suite does not claim a human toolbar-click or visual result.
+通常のブラウザーテストはループバック権限内のため、非ループバックサイトの activeTab を検証しません。権限テストでは一時 Chrome 内だけで `review.test` をローカルに解決し、一時 manifest に権限を増やさず `Ctrl+Shift+Y` アクションを追加します。PID とランダムなページタイトルが一致するウィンドウに XTest で入力し、操作前の挿入拒否、操作による許可、A→D1→B、同一オリジンでの許可維持、別オリジン遷移後の失効を検証します。許可後の挿入は信頼済みポップアップページのメッセージで駆動し、人によるツールバークリックや目視確認は証明しません。
 
-The permission suite requires Linux, Python 3, Xvfb with keyboard support (`xkbcomp`, `xkeyboard-config`), `libX11.so.6`, and `libXtst.so.6`. It launches its **own isolated Xvfb display**, disables TCP and filesystem X11 listeners (Linux abstract UNIX socket only), and sends no keys to the existing desktop. `XVFB_PATH` can override the `Xvfb` executable. A user-owned [conda-forge Xvfb environment](https://github.com/conda-forge/xorg-xvfb-server-feedstock) is an alternative when system packages are unavailable:
+権限テストには Linux、Python 3、Xvfb、`xkbcomp`、`xkeyboard-config`、`libX11.so.6`、`libXtst.so.6` が必要です。独立した Xvfb を起動し、TCP・ファイルシステム X11 リスナーを無効にして Linux の抽象 UNIX ソケットだけを使います。既存デスクトップにはキーを送りません。`XVFB_PATH` で実行ファイルを変更できます。システムパッケージを使えない場合は [conda-forge Xvfb](https://github.com/conda-forge/xorg-xvfb-server-feedstock) も利用できます。
 
 ```sh
-# Requires micromamba already available; no shell initialization or sudo needed.
+# micromamba が導入済みの場合。sudo やシェル初期化は不要
 micromamba create --prefix "$PWD/.local/browser-tools" --channel conda-forge --override-channels --yes xorg-xvfb-server xkeyboard-config
 XVFB_PATH="$PWD/.local/browser-tools/bin/Xvfb" pnpm test:permissions
 ```
 
-The production manifest and application source are not modified by this test. Temporary displays, profiles, the copied manifest and D1 storage are cleaned up afterward. This optional suite is separate from `pnpm test` and CI because it requires the native Linux test dependencies. Human toolbar-click/visual acceptance in the intended app remains the next check.
+一時ディスプレイ、プロファイル、manifest、D1 は終了時に削除します。このテストはネイティブ依存があるため通常のテスト・CI には含めません。残る実アカウント・実アプリの確認は[手動受入手順](docs/manual-test.md)を参照してください。
 
-See [the API contract](docs/api-contract.md), [manual acceptance checklist](docs/manual-test.md) and [implementation review](docs/milestone-1-review.md) for scope, evidence and remaining acceptance work.
+## 制約
 
-## Privacy and limitations
+- 位置ベースのセレクターは DOM 変更で古くなります。一意性、元のタグ、取得時の安全なテキストを確認し、不一致なら一覧だけに残します。同一位置で同じ要素が入れ替わる場合は誤認の余地があります。iframe、ページ側 Shadow DOM、canvas 内部、別オリジン埋め込みには対応しません。
+- DOM・スクロール・サイズ変更は100 ms のデバウンス、受動的な SPA パス検知は250 ms 間隔です。選択・送信・非同期応答時にも現在の URL を確認し、古い応答と旧ルートの下書きを破棄します。注入ホストの削除や文書離脱時にリスナー・タイマーを解除します。Shadow DOM は CSS と通常の DOM アクセスを分離しますが、ページによるホスト削除や先行イベント処理を防げないため、悪意あるページのレビューは避けてください。
+- URL のドットセグメントは正規化し、曖昧なエンコード済みスラッシュ・バックスラッシュは拒否します。パス自体に識別情報が含まれる場合があります。サーバーは送信 URL を取得しません。CORS やページ URL は実タブ・サイトへのアクセス権の証明ではありません。
+- Google ログイン開始・完了はそれぞれ10回/IP/分、認証済みフィードバックは120回/参加者/分です。固定窓の境界ではバーストでき、同じ NAT の利用者は枠を共有します。D1 の短命なバケット識別子はハッシュ化し、後続リクエストで削除します。CF-Connecting-IP を信頼できるのは Cloudflare 配下だけで、ローカルでは偽装可能です。公開サービス向けの堅牢化や分散負荷試験は未実施です。
+- 読み取りはルートごとの最新500件を時系列順で返します。削除・管理・失効 UI、包括的なエクスポート、一般配布、管理されたデプロイは後続課題です。旧招待・セッションのテーブルと API は互換性のためサイト共有から分離して残します。
 
-- The Worker stores only selector, tag, up to 120 characters of direct text, viewport-relative rectangle, normalized path, category and comment. Selector construction copies no IDs, attributes or field values. Form controls, editable/private/hidden regions, scripts and frames are excluded; descendants of those regions are also excluded. It never reads cookies, HTML serialization, form values or page auth headers. User-written comments and ordinary visible text can still contain personal information; only review pages suitable for sharing, and mark sensitive regions `data-private`.
-- Google login flows expire after five minutes and are consumed once. Their state and nonce are hashed in D1. Logout revokes the app token without deleting feedback; it does not sign the browser out of Google. If the API cannot be reached during logout, local credentials are cleared and the server token expires on its normal deadline.
-- Participant bearer tokens remain in extension session storage with access restricted to trusted extension contexts. Content scripts receive feedback, not credentials. API requests omit cookies, disallow redirects and have a timeout. The API hashes all generated secrets/tokens at rest; logs do not include bodies, invite codes or authorization headers.
-- Google-issued app token expiry is checked on every feedback request. The server derives the exact site origin and normalized route from the validated URL. All signed-in users can read and write all sites; there is no site ownership or invitation gate. CORS is a browser policy, not proof that a request came from a real tab; the extension also checks message sender/frame and route.
-- Query strings and fragments are discarded before extension API requests and never identify routes. `/app/` and `/app` are the same route; URL dot segments normalize; ambiguous encoded slash/backslash paths are rejected. **Hash routers and apps whose distinct screens depend on queries are not supported.** Paths themselves may contain identifiers; review only suitable pages. The server never fetches submitted URLs.
-- Positional selectors can become stale after DOM changes. Resolution requires exactly one matching element, the original tag and (when captured) identical safe text; otherwise comments remain in the list. Identical elements reordered at the same position can still be confused. Iframes, page shadow trees, canvas elements as internal targets and cross-origin embedded content are unsupported. Pins follow the current element rather than guessing from a stale rectangle.
-- DOM/scroll/resize updates are debounced at 100 ms; Passive SPA path changes are checked every 250 ms; selection, submission and asynchronous responses also check the live URL immediately, discard stale responses and clear old-route drafts. Removing the injected host or leaving the document releases all selection listeners and timers. Avoid reviewing adversarial pages: Shadow DOM isolates CSS and normal DOM access, but it cannot stop the host page from removing an injected host or running pre-existing event handlers ahead of the selector.
-- Google login limits: 10 starts/IP/minute and 10 completions/IP/minute; participant feedback requests: 120/minute. Fixed windows allow boundary bursts and shared NAT users share a budget. D1 stores only short-lived hashed bucket identifiers, pruned on later requests. CF-Connecting-IP is trusted only behind Cloudflare; local callers can spoof it. No public-service hardening or distributed load test is claimed.
-- Reads return the latest 500 items per route in chronological order. Review management, revocation UI, deletion/export, public distribution and managed deployment remain later work. Legacy invitation/session tables and endpoints are retained for compatibility, isolated from site sharing; no old comments or credentials are copied into the shared tables.
+API の詳細は [API 契約](docs/api-contract.md)、今後の範囲は[実装計画](docs/implementation-plan.md)を参照してください。構成は `packages/shared`（Zod・正規化・型）、`apps/api`（Hono・D1）、`apps/extension`（ポップアップ・分離 UI・通信）、`scripts/browser-smoke.mjs`（ブラウザー検証）です。
