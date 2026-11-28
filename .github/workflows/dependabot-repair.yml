@@ -1,0 +1,110 @@
+name: Dependabot fallback repair
+on:
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      alert_number:
+        description: "Optional Dependabot alert number; empty selects the first eligible alert"
+        type: string
+        default: ""
+permissions:
+  contents: read
+concurrency:
+  group: dependabot-fallback-repair
+  cancel-in-progress: false
+jobs:
+  discover:
+    if: vars.DEPENDABOT_REPAIR_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      candidate: ${{ steps.discover.outputs.candidate }}
+      base_sha: ${{ steps.base.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Record the repair base
+        id: base
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Find an uncovered alert
+        id: discover
+        run: node scripts/dependabot-repair.mjs discover "$RUNNER_TEMP/repair.json"
+        env:
+          GH_TOKEN: ${{ secrets.DEPENDABOT_REPAIR_TOKEN }}
+          REPAIR_ALERT_NUMBER: ${{ inputs.alert_number }}
+      - uses: actions/upload-artifact@v4
+        if: steps.discover.outputs.candidate == 'true'
+        with:
+          name: repair-plan
+          path: ${{ runner.temp }}/repair.json
+          retention-days: 1
+          if-no-files-found: error
+  repair:
+    needs: discover
+    if: needs.discover.outputs.candidate == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.discover.outputs.base_sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: repair-plan
+          path: ${{ runner.temp }}/plan
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Repair and validate without repository credentials
+        run: |
+          pnpm install --frozen-lockfile
+          node scripts/dependabot-repair.mjs repair "$RUNNER_TEMP/plan/repair.json"
+          pnpm install --frozen-lockfile
+          pnpm lint
+          pnpm typecheck
+          pnpm test
+          pnpm build
+          node scripts/validate-ci.mjs
+          node scripts/package-extension.mjs
+          pnpm test:browser
+          git diff --binary > "$RUNNER_TEMP/repair.patch"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: repair-patch
+          path: ${{ runner.temp }}/repair.patch
+          retention-days: 1
+          if-no-files-found: error
+      - name: Report blocked repair
+        if: failure()
+        run: echo 'Repair or validation failed; no draft PR was created. Review the failed step before retrying.' >> "$GITHUB_STEP_SUMMARY"
+  publish:
+    needs: [discover, repair]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.discover.outputs.base_sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: repair-plan
+          path: ${{ runner.temp }}/plan
+      - uses: actions/download-artifact@v4
+        with:
+          name: repair-patch
+          path: ${{ runner.temp }}/patch
+      - name: Apply only validated dependency changes in a fresh runner
+        run: node scripts/dependabot-repair.mjs apply "$RUNNER_TEMP/patch/repair.patch"
+      - name: Publish a draft for human review
+        run: |
+          gh auth setup-git
+          node scripts/dependabot-repair.mjs publish "$RUNNER_TEMP/plan/repair.json"
+        env:
+          GH_TOKEN: ${{ secrets.DEPENDABOT_REPAIR_TOKEN }}
