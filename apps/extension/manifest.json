@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "App Feedback (local)",
-  "version": "0.1.0",
-  "description": "Private feedback for registered review pages.",
+  "version": "0.1.4",
+  "description": "Shared feedback on website elements.",
   "permissions": ["activeTab", "scripting", "storage", "identity"],
   "host_permissions": ["http://localhost/*", "http://127.0.0.1/*"],
   "action": {

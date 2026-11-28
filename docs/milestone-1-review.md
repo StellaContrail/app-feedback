@@ -1,5 +1,7 @@
 # Milestone 1 implementation review
 
+> Historical review: the implementation now uses site sharing as requested by the user. The fixed-destination/session descriptions below document earlier behavior, not the current extension. See README and api-contract.md for the current contract. Migration 0004 adds independent site authentication, unique origins and shared route feedback, preserving private legacy data. New site tokens expire after 24 hours; sites have no seven-day session expiry. Re-run current tests for current evidence.
+
 ## Baseline and scope
 
 Started from `chore/codex-starter`: only README, instructions, API/implementation drafts and the initial D1 schema existed. No runnable API/extension, package management or tests existed. Implemented only Milestone 1. No deployment, cloud resource, public distribution, PR, merge, dashboard, screenshot, R2 or AI work was performed.

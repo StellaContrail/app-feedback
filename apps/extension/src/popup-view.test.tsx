@@ -29,9 +29,11 @@ it("shows one joined entry action that opens viewing without starting selection"
   expect(
     container.querySelector('[role="status"]')?.getAttribute("aria-label"),
   ).toBe("Reviewer A として参加中");
-  expect(container.querySelector("form")).toBeNull();
+  expect(
+    container.querySelector(".extension-feedback:not([open])"),
+  ).not.toBeNull();
   expect(container.querySelector("input")).toBeNull();
-  expect(container.querySelector("details")).toBeNull();
+  expect(container.querySelector("details")?.hasAttribute("open")).toBe(false);
   const actions =
     container.querySelectorAll<HTMLButtonElement>(".actions > button");
   expect(actions).toHaveLength(1);
@@ -54,7 +56,7 @@ it("shows only Google login while signed out and returns there after logout", as
     };
   });
   await act(async () => root.render(<Popup />));
-  expect(container.querySelector("form")).toBeNull();
+  expect(container.querySelector(".extension-feedback")).toBeNull();
   expect(container.querySelector("input")).toBeNull();
   expect(container.textContent).not.toContain("参加設定");
   expect(container.textContent).not.toContain("コメントを開く");
@@ -63,11 +65,13 @@ it("shows only Google login while signed out and returns there after logout", as
   );
   expect(send).toHaveBeenCalledWith({ type: "join" });
   expect(container.textContent).toContain("Google Name");
+  expect(container.querySelector(".extension-feedback")).not.toBeNull();
   await act(async () =>
     container.querySelector<HTMLButtonElement>(".leave")!.click(),
   );
   expect(send).toHaveBeenCalledWith({ type: "forget" });
   expect(container.textContent).toContain("Googleでログイン");
+  expect(container.querySelector(".extension-feedback")).toBeNull();
   expect(container.textContent).not.toContain("コメントを開く");
 });
 it("keeps login available after cancellation", async () => {

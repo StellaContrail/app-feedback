@@ -4,6 +4,7 @@ import type { FeedbackItem } from "@app-feedback/shared";
 it("copies only the current route and explicitly allowed saved feedback fields", () => {
   const item: FeedbackItem = {
     id: "private-id",
+    authorName: "private-name",
     category: "bug",
     comment: "複数行\n<script>text only</script>",
     createdAt: "2026-11-26T00:00:00.000Z",
@@ -45,6 +46,7 @@ it("copies only the current route and explicitly allowed saved feedback fields",
     "private-dom",
     "private-input",
     "private-id",
+    "private-name",
     "secret=query",
     "#private",
   ])

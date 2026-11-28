@@ -1,4 +1,4 @@
-import { fixedGoogleSessionSchema } from "@app-feedback/shared";
+import { siteGoogleSessionSchema } from "@app-feedback/shared";
 export class GoogleLoginError extends Error {
   constructor(readonly kind: "setup" | "cancel" | "invalid") {
     super(`Google login ${kind}`);
@@ -82,7 +82,7 @@ export async function joinWithGoogle(base: string, post: Post) {
     throw new GoogleLoginError("invalid");
   const code = returned.searchParams.get("code");
   if (!code || code.length > 2048) throw new GoogleLoginError("invalid");
-  return fixedGoogleSessionSchema.parse(
+  return siteGoogleSessionSchema.parse(
     await post(base, "/v1/auth/google/join", undefined, {
       flowId: result.flowId,
       state,

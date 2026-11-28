@@ -2,12 +2,10 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 import {
   googleStartSchema,
   googleJoinSchema,
-  fixedGoogleStartSchema,
+  siteGoogleStartSchema,
 } from "@app-feedback/shared";
 import { hash, secret, pkceChallenge } from "./crypto";
 export type GoogleBindings = {
-  DEFAULT_SESSION_ID?: string;
-  DEFAULT_APP_ID?: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   EXTENSION_ORIGINS: string;
@@ -44,11 +42,7 @@ const keys = createRemoteJWKSet(
   { timeoutDuration: 5000, cacheMaxAge: 600000 },
 );
 function unauthorized(): never {
-  throw new GoogleAuthError(
-    "UNAUTHORIZED",
-    401,
-    "Invalid Google login or invitation",
-  );
+  throw new GoogleAuthError("UNAUTHORIZED", 401, "Invalid Google login");
 }
 function validRedirect(env: GoogleBindings, raw: string, origin?: string) {
   const url = new URL(raw);
@@ -67,15 +61,14 @@ function validRedirect(env: GoogleBindings, raw: string, origin?: string) {
 export async function startGoogleLogin(
   db: D1Database,
   env: GoogleBindings,
-  sessionId: string,
+  sessionId: string | undefined,
   body: unknown,
   origin?: string,
-  fixed = false,
 ) {
   const config = googleConfig(env);
-  const parsed = (fixed ? fixedGoogleStartSchema : googleStartSchema).safeParse(
-    body,
-  );
+  const parsed = (
+    sessionId === undefined ? siteGoogleStartSchema : googleStartSchema
+  ).safeParse(body);
   if (!parsed.success)
     throw new GoogleAuthError(
       "VALIDATION_ERROR",
@@ -85,48 +78,60 @@ export async function startGoogleLogin(
   const data = parsed.data,
     redirectUri = validRedirect(env, data.redirectUri, origin);
   const now = Date.now();
-  const session = fixed
-    ? await db
-        .prepare(
-          "SELECT invite_secret_hash FROM sessions WHERE id=? AND expires_at>?",
-        )
-        .bind(sessionId, new Date(now).toISOString())
-        .first<{ invite_secret_hash: string }>()
-    : await db
-        .prepare(
-          "SELECT invite_secret_hash FROM sessions WHERE id=? AND invite_secret_hash=? AND expires_at>?",
-        )
-        .bind(
-          sessionId,
-          await hash(googleStartSchema.parse(body).inviteCode),
-          new Date(now).toISOString(),
-        )
-        .first<{ invite_secret_hash: string }>();
-  if (!session) unauthorized();
-  const inviteHash = session.invite_secret_hash;
+  const session =
+    sessionId === undefined
+      ? undefined
+      : await db
+          .prepare(
+            "SELECT invite_secret_hash FROM sessions WHERE id=? AND invite_secret_hash=? AND expires_at>?",
+          )
+          .bind(
+            sessionId,
+            await hash(googleStartSchema.parse(body).inviteCode),
+            new Date(now).toISOString(),
+          )
+          .first<{ invite_secret_hash: string }>();
+  if (sessionId !== undefined && !session) unauthorized();
   await db
-    .prepare("DELETE FROM google_login_flows WHERE expires_at<=?")
+    .prepare(
+      sessionId === undefined
+        ? "DELETE FROM site_login_flows WHERE expires_at<=?"
+        : "DELETE FROM google_login_flows WHERE expires_at<=?",
+    )
     .bind(now)
     .run();
   const flowId = crypto.randomUUID(),
     state = secret(),
     nonce = secret();
-  await db
-    .prepare(
-      "INSERT INTO google_login_flows(id,session_id,invite_secret_hash,display_name,redirect_uri,state_hash,nonce_hash,code_challenge,expires_at) VALUES(?,?,?,?,?,?,?,?,?)",
-    )
-    .bind(
-      flowId,
-      sessionId,
-      inviteHash,
-      "",
-      redirectUri,
-      await hash(state),
-      await hash(nonce),
-      data.codeChallenge,
-      now + 5 * 60000,
-    )
-    .run();
+  const values = [
+    flowId,
+    redirectUri,
+    await hash(state),
+    await hash(nonce),
+    data.codeChallenge,
+    now + 5 * 60000,
+  ];
+  if (sessionId === undefined) {
+    await db
+      .prepare(
+        "INSERT INTO site_login_flows(id,redirect_uri,state_hash,nonce_hash,code_challenge,expires_at) VALUES(?,?,?,?,?,?)",
+      )
+      .bind(...values)
+      .run();
+  } else {
+    await db
+      .prepare(
+        "INSERT INTO google_login_flows(id,session_id,invite_secret_hash,display_name,redirect_uri,state_hash,nonce_hash,code_challenge,expires_at) VALUES(?,?,?,?,?,?,?,?,?)",
+      )
+      .bind(
+        flowId,
+        sessionId,
+        session!.invite_secret_hash,
+        "",
+        ...values.slice(1),
+      )
+      .run();
+  }
   const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   url.search = new URLSearchParams({
     client_id: config.clientId,
@@ -150,7 +155,7 @@ type Flow = {
 export async function completeGoogleLogin(
   db: D1Database,
   env: GoogleBindings,
-  sessionId: string,
+  sessionId: string | undefined,
   body: unknown,
 ) {
   const config = googleConfig(env);
@@ -171,18 +176,26 @@ export async function completeGoogleLogin(
   const data = parsed.data;
   // Single-use consumption is atomic across isolates; PKCE/state mismatches do
   // not consume a legitimate user's flow. No code/verifier/token is stored.
-  const flow = await db
-    .prepare(
-      "DELETE FROM google_login_flows WHERE id=? AND session_id=? AND state_hash=? AND code_challenge=? AND expires_at>? RETURNING session_id,invite_secret_hash,redirect_uri,nonce_hash",
-    )
-    .bind(
-      data.flowId,
-      sessionId,
-      await hash(data.state),
-      await pkceChallenge(data.codeVerifier),
-      Date.now(),
-    )
-    .first<Flow>();
+  const flowValues = [
+    data.flowId,
+    await hash(data.state),
+    await pkceChallenge(data.codeVerifier),
+    Date.now(),
+  ];
+  const flow =
+    sessionId === undefined
+      ? await db
+          .prepare(
+            "DELETE FROM site_login_flows WHERE id=? AND state_hash=? AND code_challenge=? AND expires_at>? RETURNING redirect_uri,nonce_hash",
+          )
+          .bind(...flowValues)
+          .first<Flow>()
+      : await db
+          .prepare(
+            "DELETE FROM google_login_flows WHERE id=? AND session_id=? AND state_hash=? AND code_challenge=? AND expires_at>? RETURNING session_id,invite_secret_hash,redirect_uri,nonce_hash",
+          )
+          .bind(data.flowId, sessionId, ...flowValues.slice(1))
+          .first<Flow>();
   if (!flow) unauthorized();
   validRedirect(env, flow.redirect_uri);
   let googleSubject: string;
@@ -239,6 +252,25 @@ export async function completeGoogleLogin(
   } catch {
     unauthorized();
   }
+  if (sessionId === undefined) {
+    const token = secret(),
+      id = crypto.randomUUID();
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    await db
+      .prepare(
+        "INSERT INTO site_participants(id,display_name,google_subject_hash,token_hash,expires_at) VALUES(?,?,?,?,?)",
+      )
+      .bind(id, displayName, googleSubject, await hash(token), expiresAt)
+      .run();
+    return {
+      participantId: id,
+      token,
+      expiresAt,
+      authProvider: "google" as const,
+      scope: "sites" as const,
+      displayName,
+    };
+  }
   const now = new Date().toISOString();
   const session = await db
     .prepare(
@@ -276,26 +308,4 @@ export async function completeGoogleLogin(
     authProvider: "google" as const,
     displayName,
   };
-}
-
-export async function fixedDestination(db: D1Database, env: GoogleBindings) {
-  if (!env.DEFAULT_SESSION_ID || !env.DEFAULT_APP_ID)
-    throw new GoogleAuthError(
-      "AUTH_NOT_CONFIGURED",
-      503,
-      "Login destination is not configured",
-    );
-  const app = await db
-    .prepare(
-      "SELECT a.id FROM apps a JOIN sessions s ON s.id=a.session_id WHERE a.id=? AND a.session_id=? AND s.expires_at>?",
-    )
-    .bind(env.DEFAULT_APP_ID, env.DEFAULT_SESSION_ID, new Date().toISOString())
-    .first();
-  if (!app)
-    throw new GoogleAuthError(
-      "AUTH_NOT_CONFIGURED",
-      503,
-      "Login destination is unavailable",
-    );
-  return { sessionId: env.DEFAULT_SESSION_ID, appId: env.DEFAULT_APP_ID };
 }

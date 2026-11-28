@@ -1,0 +1,18 @@
+{
+  // Production D1 binding. OAuth credentials are stored as Worker secrets.
+  "name": "app-feedback",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-09-06",
+  "workers_dev": true,
+  "vars": {
+    "EXTENSION_ORIGINS": "chrome-extension://ijagaijpoccamffckkbfppnilhpblekc",
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "app-feedback-production",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations",
+    },
+  ],
+}

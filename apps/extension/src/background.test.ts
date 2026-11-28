@@ -4,11 +4,11 @@ import { apiBase } from "./protocol";
 const config: Settings = {
   authProvider: "google",
   apiUrl: "http://localhost:8787",
-  sessionId: "s1",
-  appId: "a1",
+  scope: "sites",
   token: "b".repeat(64),
   expiresAt: "2099-01-01T00:00:00.000Z",
 };
+const queryTab = vi.fn();
 const get = vi.fn(),
   set = vi.fn(),
   clear = vi.fn(),
@@ -48,9 +48,7 @@ beforeAll(async () => {
       sendMessage,
       onUpdated: { addListener: vi.fn() },
       onRemoved: { addListener: vi.fn() },
-      query: vi
-        .fn()
-        .mockResolvedValue([{ id: 1, url: "https://example.com/app" }]),
+      query: queryTab,
     },
     scripting: { executeScript },
   });
@@ -76,6 +74,7 @@ beforeEach(() => {
     url: "https://example.com/app",
     status: "complete",
   });
+  queryTab.mockResolvedValue([{ id: 1, url: "https://example.com/app" }]);
   executeScript.mockResolvedValue([]);
   fetchMock.mockImplementation(
     async () =>
@@ -84,15 +83,14 @@ beforeEach(() => {
       }),
   );
 });
-function mockFixedLogin() {
+function mockSiteLogin() {
   const login = {
     participantId: "00000000-0000-4000-8000-000000000001",
     token: "f".repeat(64),
     expiresAt: "2099-01-01T00:00:00.000Z",
     authProvider: "google",
     displayName: "Verified Google Name",
-    sessionId: "fixed-session",
-    appId: "fixed-app",
+    scope: "sites",
   };
   fetchMock.mockImplementation(async (raw: string, init: RequestInit) => {
     if (raw.endsWith("/v1/auth/google/start")) {
@@ -118,16 +116,15 @@ function mockFixedLogin() {
   return login;
 }
 describe("trusted background transport", () => {
-  it("stores only the server destination and Google name after input-free login", async () => {
-    const login = mockFixedLogin();
+  it("stores a site-wide Google login without a fixed destination", async () => {
+    const login = mockSiteLogin();
     launchGoogle.mockResolvedValue(
       googleRedirect + "?code=test-code&state=" + "e".repeat(64),
     );
     await handle({ type: "join" }, popup);
     expect(state.settings).toMatchObject({
       apiUrl: "http://localhost:8787",
-      sessionId: login.sessionId,
-      appId: login.appId,
+      scope: "sites",
       displayName: login.displayName,
       token: login.token,
       authProvider: "google",
@@ -139,7 +136,7 @@ describe("trusted background transport", () => {
     expect(await handle({ type: "status" }, popup)).toEqual({ joined: false });
   });
   it("does not restore a pending Google login after logout", async () => {
-    const login = mockFixedLogin();
+    const login = mockSiteLogin();
     let finish!: (callback: string) => void;
     launchGoogle.mockImplementation(
       () =>
@@ -155,7 +152,7 @@ describe("trusted background transport", () => {
     await rejected;
     expect(state.settings).toBeUndefined();
     expect(fetchMock).toHaveBeenLastCalledWith(
-      "http://localhost:8787/v1/participants/logout",
+      "http://localhost:8787/v1/auth/logout",
       expect.objectContaining({
         headers: expect.objectContaining({
           Authorization: "Bearer " + login.token,
@@ -220,7 +217,7 @@ describe("trusted background transport", () => {
     );
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).not.toMatch(/secret|hash/);
-    expect(url).toContain("path=%2Fapp");
+    expect(url).toContain("pageUrl=https%3A%2F%2Fexample.com%2Fapp");
     expect(init.credentials).toBe("omit");
     expect(init.redirect).toBe("error");
     expect(init.headers).toEqual({ Authorization: `Bearer ${config.token}` });
@@ -231,7 +228,7 @@ describe("trusted background transport", () => {
     });
     await expect(
       handle({ type: "list", pageUrl: "https://example.com/app" }, page),
-    ).rejects.toThrow("Join the session again");
+    ).rejects.toThrow("Log in again");
     expect(fetchMock).not.toHaveBeenCalled();
   });
   it("returns joined status without disclosing credentials or displaying the join form again", async () => {
@@ -321,13 +318,63 @@ describe("trusted background transport", () => {
       active: false,
     });
   });
+  it("uses each explicitly activated site's URL without a fixed app destination", async () => {
+    await handle({ type: "activate" }, popup);
+    expect(await handle({ type: "status" }, popup)).toMatchObject({
+      active: true,
+    });
+    queryTab.mockResolvedValue([
+      { id: 1, url: "https://other.example/outside?secret=x#fragment" },
+    ]);
+    expect(await handle({ type: "status" }, popup)).toMatchObject({
+      active: false,
+    });
+    getTab.mockResolvedValue({
+      id: 1,
+      url: "https://other.example/outside",
+      status: "complete",
+    });
+    await handle({ type: "activate" }, popup);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "http://localhost:8787/v1/sites/feedback?pageUrl=https%3A%2F%2Fother.example%2Foutside",
+      expect.anything(),
+    );
+    expect(executeScript.mock.calls.at(-2)?.[0].args).toEqual([
+      "https://other.example/outside",
+      "view",
+    ]);
+    expect(JSON.stringify(state.reviewTabs)).not.toContain(config.token);
+    queryTab.mockResolvedValue([{ id: 1, url: "chrome://settings" }]);
+    expect(await handle({ type: "status" }, popup)).toMatchObject({
+      joined: true,
+      active: false,
+    });
+    const { restoreReview } = await import("./background");
+    state.settings = { ...config, token: "c".repeat(64) };
+    executeScript.mockClear();
+    await restoreReview(1);
+    expect(executeScript).not.toHaveBeenCalled();
+  });
+  it("requires fresh site login for old fixed-session credentials", async () => {
+    state.settings = {
+      ...config,
+      scope: undefined,
+      sessionId: "old-session",
+      appId: "old-app",
+    };
+    expect(await handle({ type: "status" }, popup)).toEqual({ joined: false });
+    await expect(handle({ type: "activate" }, popup)).rejects.toThrow(
+      "Log in again",
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
   it("does not treat pre-Google cached participation as signed in", async () => {
     const legacy = { ...config } as Partial<Settings>;
     delete legacy.authProvider;
     state.settings = legacy;
     expect(await handle({ type: "status" }, popup)).toEqual({ joined: false });
     await expect(handle({ type: "activate" }, popup)).rejects.toThrow(
-      "Join the session again",
+      "Log in again",
     );
     expect(fetchMock).not.toHaveBeenCalled();
   });

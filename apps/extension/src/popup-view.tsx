@@ -1,3 +1,4 @@
+import { ExtensionFeedback } from "./extension-feedback";
 import { useEffect, useState } from "react";
 import { send, type SessionStatus } from "./protocol";
 import { popupStyles } from "./ui-styles";
@@ -84,7 +85,9 @@ export function Popup() {
               </span>
               <span className="action-copy">
                 <span className="action-label">コメントを開く</span>
-                <span className="action-caption">このページで、見る・書く</span>
+                <span className="action-caption">
+                  このサイトの全利用者と共有
+                </span>
               </span>
               <Icon name="arrow" className="action-arrow" />
             </button>
@@ -106,9 +109,24 @@ export function Popup() {
                 参加中
               </span>
             </div>
+            <button
+              className="leave"
+              type="button"
+              aria-label="ログアウト"
+              title="ログアウト"
+              disabled={busy}
+              onClick={() =>
+                void action(async () => {
+                  await send({ type: "forget" });
+                  await refresh();
+                })
+              }
+            >
+              <Icon name="logout" />
+            </button>
           </div>
-          <div className="settings settings-actions">
-            {session.active && (
+          {session.active && (
+            <div className="settings settings-actions">
               <button
                 disabled={busy}
                 onClick={() =>
@@ -120,26 +138,16 @@ export function Popup() {
               >
                 このタブの表示をやめる
               </button>
-            )}
-            <button
-              className="leave"
-              disabled={busy}
-              onClick={() =>
-                void action(async () => {
-                  await send({ type: "forget" });
-                  await refresh();
-                })
-              }
-            >
-              ログアウト
-            </button>
-          </div>
+            </div>
+          )}
         </>
       ) : (
         <>
           <div className="join-heading">
             <h2>ログインして、レビューを始める</h2>
-            <p>Googleアカウント名で利用できます。</p>
+            <p>
+              Googleアカウント名で利用できます。コメントは同じサイトを使う全利用者に共有されます。
+            </p>
           </div>
           <button
             className="join-submit"
@@ -155,6 +163,7 @@ export function Popup() {
           </button>
         </>
       )}
+      {session?.joined && <ExtensionFeedback />}
       {error && (
         <p role="alert" className="error">
           {error}

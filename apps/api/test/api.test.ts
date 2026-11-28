@@ -4,8 +4,6 @@ import app, { hash } from "../src/index";
 import { generateKeyPair, exportJWK, SignJWT, type JWTPayload } from "jose";
 import { pkceChallenge } from "../src/crypto";
 const googleEnv = {
-  DEFAULT_SESSION_ID: "s1",
-  DEFAULT_APP_ID: "a1",
   GOOGLE_CLIENT_ID: "test-client.apps.googleusercontent.com",
   GOOGLE_CLIENT_SECRET: "test-client-secret",
 };
@@ -108,6 +106,16 @@ async function join(session = "s1") {
     authProvider: string;
   };
 }
+async function siteLogin(claims: JWTPayload = {}) {
+  const login = await prepareLogin("", claims, true);
+  mockToken(login.jwt);
+  const r = await request("/v1/auth/google/join", { body: login.completion });
+  expect(r.status).toBe(201);
+  return (await r.json()) as { token: string; participantId: string };
+}
+const siteRoute = "/v1/sites/feedback";
+const siteQuery = (pageUrl = "https://example.com/app/settings") =>
+  `?${new URLSearchParams({ pageUrl })}`;
 const input = {
   pageUrl: "https://example.com/app/settings?private=discard#ignore",
   target: {
@@ -142,6 +150,10 @@ beforeAll(async () => {
 beforeEach(async () => {
   await env.DB.batch(
     [
+      "DELETE FROM site_feedback",
+      "DELETE FROM sites",
+      "DELETE FROM site_participants",
+      "DELETE FROM site_login_flows",
       "DELETE FROM google_login_flows",
       "DELETE FROM feedback",
       "DELETE FROM participants",
@@ -169,8 +181,9 @@ beforeEach(async () => {
     .run();
 });
 describe("Workers runtime + real D1", () => {
-  it("fixed login chooses the server destination and verified Google name; logout and relogin work", async () => {
-    const login = await prepareLogin("s1", {}, true);
+  it("site login needs no configured destination and uses the verified Google name", async () => {
+    await env.DB.prepare("DELETE FROM sessions").run();
+    const login = await prepareLogin("", {}, true);
     expect(login.url.searchParams.get("scope")).toBe("openid profile");
     mockToken(login.jwt);
     const response = await request("/v1/auth/google/join", {
@@ -180,47 +193,28 @@ describe("Workers runtime + real D1", () => {
     const user = (await response.json()) as {
       token: string;
       participantId: string;
-      displayName: string;
-      sessionId: string;
-      appId: string;
     };
     expect(user).toMatchObject({
       displayName: "Google Account Name",
-      sessionId: "s1",
-      appId: "a1",
+      scope: "sites",
     });
+    expect(user).not.toHaveProperty("sessionId");
+    expect(user).not.toHaveProperty("appId");
     const row = await env.DB.prepare(
-      "SELECT display_name FROM participants WHERE id=?",
+      "SELECT * FROM site_participants WHERE id=?",
     )
       .bind(user.participantId)
       .first();
-    expect(row?.display_name).toBe("Google Account Name");
-    expect(
-      (await request(route, { token: user.token, body: input })).status,
-    ).toBe(201);
-    expect(
-      (
-        await request("/v1/participants/logout", {
-          token: user.token,
-          body: {},
-        })
-      ).status,
-    ).toBe(200);
-    expect((await request(route + query(), { token: user.token })).status).toBe(
-      401,
+    expect(row?.token_hash).toBe(await hash(user.token));
+    expect(row?.google_subject_hash).toBe(
+      await hash("google:verified-test-google-user"),
     );
-    const again = await prepareLogin("s1", {}, true);
-    mockToken(again.jwt);
-    const r = await request("/v1/auth/google/join", { body: again.completion });
-    expect(r.status).toBe(201);
-    const next = (await r.json()) as { token: string };
-    expect(next.token).not.toBe(user.token);
-    const comments = (await (
-      await request(route + query(), { token: next.token })
-    ).json()) as { items: unknown[] };
-    expect(comments.items).toHaveLength(1);
+    expect(JSON.stringify(row)).not.toContain(login.jwt);
+    expect(
+      Date.parse(row!.expires_at as string) - Date.now(),
+    ).toBeLessThanOrEqual(86400000);
   });
-  it("fixed login rejects client destinations and missing, mismatched or expired server destinations", async () => {
+  it("site login rejects client destinations, names, roles and invitations", async () => {
     const body = {
       redirectUri: "https://" + "a".repeat(32) + ".chromiumapp.org/google",
       codeChallenge: await pkceChallenge("v".repeat(64)),
@@ -230,7 +224,8 @@ describe("Workers runtime + real D1", () => {
       { appId: "other" },
       { displayName: "Spoofed" },
       { inviteCode: invite },
-    ])
+      { role: "admin" },
+    ]) {
       expect(
         (
           await request("/v1/auth/google/start", {
@@ -238,35 +233,355 @@ describe("Workers runtime + real D1", () => {
           })
         ).status,
       ).toBe(400);
-    for (const config of [
-      { DEFAULT_SESSION_ID: undefined },
-      { DEFAULT_APP_ID: undefined },
-      { DEFAULT_APP_ID: "absent" },
-      { DEFAULT_SESSION_ID: "s2" },
-    ]) {
-      const response = await app.request(
-        "http://local/v1/auth/google/start",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Origin: origin },
-          body: JSON.stringify(body),
-        },
-        { DB: env.DB, EXTENSION_ORIGINS: origin, ...googleEnv, ...config },
-      );
-      expect(response.status).toBe(503);
     }
-    const flow = await prepareLogin("s1", {}, true);
-    await env.DB.prepare(
-      "UPDATE sessions SET expires_at='2000-01-01T00:00:00.000Z' WHERE id='s1'",
-    ).run();
-    expect((await request("/v1/auth/google/start", { body })).status).toBe(503);
+  });
+  it("shares arbitrary sites between Google accounts and isolates origin, scheme, port and route", async () => {
+    const a = await siteLogin({ sub: "reviewer-A" }),
+      b = await siteLogin({ sub: "reviewer-B" });
     expect(
-      (await request("/v1/auth/google/join", { body: flow.completion })).status,
-    ).toBe(503);
+      await (await request(siteRoute + siteQuery(), { token: b.token })).json(),
+    ).toEqual({ items: [] });
     expect(
-      (await env.DB.prepare("SELECT count(*) AS n FROM participants").first())
-        ?.n,
+      (await env.DB.prepare("SELECT count(*) AS n FROM sites").first())?.n,
     ).toBe(0);
+    expect(
+      (await request(siteRoute, { token: a.token, body: input })).status,
+    ).toBe(201);
+    const comments = (await (
+      await request(
+        siteRoute +
+          siteQuery("https://example.com/app/settings/?q=discard#fragment"),
+        { token: b.token },
+      )
+    ).json()) as { items: { comment: string }[] };
+    expect(comments.items).toHaveLength(1);
+    expect(comments.items[0].comment).toBe(input.comment);
+    for (const pageUrl of [
+      "https://other.example/app/settings",
+      "https://example.com/other",
+      "http://example.com/app/settings",
+      "https://example.com:8443/app/settings",
+    ]) {
+      expect(
+        await (
+          await request(siteRoute + siteQuery(pageUrl), { token: b.token })
+        ).json(),
+      ).toEqual({ items: [] });
+    }
+    for (const pageUrl of [
+      "https://other.example/anything",
+      "https://example.com/outside",
+      "http://localhost:3456/app",
+    ]) {
+      expect(
+        (
+          await request(siteRoute, {
+            token: a.token,
+            body: { ...input, pageUrl },
+          })
+        ).status,
+      ).toBe(201);
+    }
+    const sites = await env.DB.prepare(
+      "SELECT origin FROM sites ORDER BY origin",
+    ).all();
+    expect(sites.results).toEqual([
+      { origin: "http://localhost:3456" },
+      { origin: "https://example.com" },
+      { origin: "https://other.example" },
+    ]);
+    expect(
+      (
+        await env.DB.prepare(
+          "SELECT page_path FROM site_feedback WHERE page_path LIKE '%?%' OR page_path LIKE '%#%'",
+        ).all()
+      ).results,
+    ).toEqual([]);
+  });
+  it("shows the verified author's name to other reviewers after logout and rejects spoofed author names", async () => {
+    const a = await siteLogin({ sub: "author-account", name: "Alice" });
+    const b = await siteLogin({ sub: "reader-account", name: "Bob" });
+    expect(
+      (await request(siteRoute, { token: a.token, body: input })).status,
+    ).toBe(201);
+    expect(
+      (
+        await request(siteRoute, {
+          token: b.token,
+          body: { ...input, authorName: "Alice" },
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (await request("/v1/auth/logout", { token: a.token, body: {} })).status,
+    ).toBe(200);
+    const result = (await (
+      await request(siteRoute + siteQuery(), { token: b.token })
+    ).json()) as { items: Record<string, unknown>[] };
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].authorName).toBe("Alice");
+    expect(Object.keys(result.items[0]).sort()).toEqual([
+      "authorName",
+      "category",
+      "comment",
+      "createdAt",
+      "id",
+      "target",
+    ]);
+    expect(JSON.stringify(result)).not.toContain("author-account");
+    expect(JSON.stringify(result)).not.toContain(a.token);
+  });
+  it("does not publish legacy comments or allow legacy credentials into site sharing", async () => {
+    const legacy = await join();
+    expect(
+      (await request(route, { token: legacy.token, body: input })).status,
+    ).toBe(201);
+    const global = await siteLogin();
+    expect(
+      await (
+        await request(siteRoute + siteQuery(), { token: global.token })
+      ).json(),
+    ).toEqual({ items: [] });
+    for (const token of [undefined, invite, admin, legacy.token]) {
+      expect((await request(siteRoute + siteQuery(), { token })).status).toBe(
+        401,
+      );
+      expect((await request(siteRoute, { token, body: input })).status).toBe(
+        401,
+      );
+    }
+    expect(
+      (await request(route + query(), { token: global.token })).status,
+    ).toBe(401);
+  });
+  it("site logout and token expiry deny access while relogin preserves comments", async () => {
+    const a = await siteLogin();
+    expect(
+      (
+        await request("/v1/auth/logout", {
+          token: a.token,
+          body: { role: "admin" },
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (await request(siteRoute, { token: a.token, body: input })).status,
+    ).toBe(201);
+    expect(
+      (await request("/v1/auth/logout", { token: a.token, body: {} })).status,
+    ).toBe(200);
+    expect(
+      (await request(siteRoute + siteQuery(), { token: a.token })).status,
+    ).toBe(401);
+    const b = await siteLogin();
+    expect(
+      (
+        (await (
+          await request(siteRoute + siteQuery(), { token: b.token })
+        ).json()) as { items: unknown[] }
+      ).items,
+    ).toHaveLength(1);
+    await env.DB.prepare(
+      "UPDATE site_participants SET expires_at='2000-01-01T00:00:00.000Z' WHERE id=?",
+    )
+      .bind(b.participantId)
+      .run();
+    expect(
+      (await request(siteRoute, { token: b.token, body: input })).status,
+    ).toBe(401);
+  });
+  it("validates site URLs and input metadata without fetching reviewed sites", async () => {
+    const a = await siteLogin();
+    for (const pageUrl of [
+      "chrome://settings",
+      "file:///tmp/file",
+      "https://u:p@example.com/app",
+      "https://example.com/a%2fb",
+      "https://example.com/a%5cb",
+      "not-url",
+    ]) {
+      expect(
+        (await request(siteRoute + siteQuery(pageUrl), { token: a.token }))
+          .status,
+      ).toBe(400);
+      expect(
+        (
+          await request(siteRoute, {
+            token: a.token,
+            body: { ...input, pageUrl },
+          })
+        ).status,
+      ).toBe(400);
+    }
+    for (const extra of [
+      { role: "admin" },
+      { siteId: "a1" },
+      { sessionId: "s1" },
+      { outerHTML: "secret" },
+    ]) {
+      expect(
+        (
+          await request(siteRoute, {
+            token: a.token,
+            body: { ...input, ...extra },
+          })
+        ).status,
+      ).toBe(400);
+    }
+    for (const target of [
+      { ...input.target, tagName: "INPUT" },
+      { ...input.target, value: "password" },
+      { ...input.target, selector: "[data-secret=password]" },
+    ]) {
+      expect(
+        (
+          await request(siteRoute, {
+            token: a.token,
+            body: { ...input, target },
+          })
+        ).status,
+      ).toBe(400);
+    }
+    expect(
+      (
+        await request(
+          siteRoute + siteQuery() + "&pageUrl=https://other.example",
+          { token: a.token },
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await request(siteRoute + siteQuery() + "&role=admin", {
+          token: a.token,
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await request(siteRoute, {
+          token: a.token,
+          body: { ...input, comment: "x".repeat(17000) },
+        })
+      ).status,
+    ).toBe(413);
+    expect(
+      (await env.DB.prepare("SELECT count(*) AS n FROM sites").first())?.n,
+    ).toBe(0);
+  });
+  it("concurrent first posts register a unique site and preserve both comments", async () => {
+    const a = await siteLogin();
+    const results = await Promise.all(
+      ["one", "two"].map((comment) =>
+        request(siteRoute, { token: a.token, body: { ...input, comment } }),
+      ),
+    );
+    expect(results.map((r) => r.status)).toEqual([201, 201]);
+    expect(
+      (await env.DB.prepare("SELECT count(*) AS n FROM sites").first())?.n,
+    ).toBe(1);
+    const rows = await env.DB.prepare(
+      "SELECT comment FROM site_feedback ORDER BY comment",
+    ).all();
+    expect(rows.results).toEqual([{ comment: "one" }, { comment: "two" }]);
+  });
+  it("site OAuth binds state and PKCE, expires flows and prevents replay", async () => {
+    const login = await prepareLogin("", {}, true);
+    for (const completion of [
+      { ...login.completion, state: "f".repeat(64) },
+      { ...login.completion, codeVerifier: "x".repeat(64) },
+    ]) {
+      expect(
+        (await request("/v1/auth/google/join", { body: completion })).status,
+      ).toBe(401);
+    }
+    mockToken(login.jwt);
+    expect(
+      (await request("/v1/auth/google/join", { body: login.completion }))
+        .status,
+    ).toBe(201);
+    expect(
+      (await request("/v1/auth/google/join", { body: login.completion }))
+        .status,
+    ).toBe(401);
+    const expired = await prepareLogin("", {}, true);
+    await env.DB.prepare("UPDATE site_login_flows SET expires_at=0 WHERE id=?")
+      .bind(expired.flow.flowId)
+      .run();
+    expect(
+      (await request("/v1/auth/google/join", { body: expired.completion }))
+        .status,
+    ).toBe(401);
+  });
+  it("site login fails closed for invalid Google claims, redirects and missing configuration", async () => {
+    for (const claims of [{ nonce: "wrong" }, { aud: "other-client" }]) {
+      const login = await prepareLogin("", claims, true);
+      mockToken(login.jwt);
+      expect(
+        (await request("/v1/auth/google/join", { body: login.completion }))
+          .status,
+      ).toBe(401);
+    }
+    expect(
+      (
+        await request("/v1/auth/google/start", {
+          body: {
+            redirectUri: "https://evil.example/google",
+            codeChallenge: await pkceChallenge("v".repeat(64)),
+          },
+        })
+      ).status,
+    ).toBe(403);
+    const response = await app.request(
+      "http://local/v1/auth/google/start",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Origin: origin },
+        body: "{}",
+      },
+      { DB: env.DB, EXTENSION_ORIGINS: origin },
+    );
+    expect(response.status).toBe(503);
+    expect(
+      (
+        await env.DB.prepare(
+          "SELECT count(*) AS n FROM site_participants",
+        ).first()
+      )?.n,
+    ).toBe(0);
+  });
+  it("rate limits global Google login and authenticated site requests", async () => {
+    const a = await siteLogin();
+    const window = Math.floor(Date.now() / 60000);
+    for (const time of [window, window + 1]) {
+      for (const [identity, attempts] of [
+        [`site-participant:${a.participantId}`, 120],
+        ["site-google:start:ip:127.0.0.1", 10],
+      ] as const) {
+        await env.DB.prepare(
+          "INSERT OR REPLACE INTO request_limits(bucket,attempts,expires_at) VALUES(?,?,?)",
+        )
+          .bind(await hash(`${identity}:${time}`), attempts, (time + 2) * 60000)
+          .run();
+      }
+    }
+    expect(
+      (await request(siteRoute + siteQuery(), { token: a.token })).status,
+    ).toBe(429);
+    expect(
+      (await request(siteRoute, { token: a.token, body: input })).status,
+    ).toBe(429);
+    expect(
+      (
+        await request("/v1/auth/google/start", {
+          body: {
+            redirectUri:
+              "https://" + "a".repeat(32) + ".chromiumapp.org/google",
+            codeChallenge: await pkceChallenge("v".repeat(64)),
+          },
+        })
+      ).status,
+    ).toBe(429);
   });
   it("does not trust legacy client names and handles absent Google profile names", async () => {
     for (const name of ["Google Verified", undefined, " "]) {

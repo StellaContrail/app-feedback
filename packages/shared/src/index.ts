@@ -35,7 +35,7 @@ const bounded = (max: number) => z.string().trim().min(1).max(max);
 export const joinSchema = z
   .object({ inviteCode: bounded(256), displayName: bounded(80) })
   .strict();
-export const fixedGoogleStartSchema = z
+export const siteGoogleStartSchema = z
   .object({
     redirectUri: z.string().url().max(512),
     codeChallenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
@@ -64,11 +64,8 @@ export const googleSessionSchema = z
     displayName: bounded(80),
   })
   .strict();
-export const fixedGoogleSessionSchema = googleSessionSchema
-  .extend({
-    sessionId: bounded(80),
-    appId: bounded(80),
-  })
+export const siteGoogleSessionSchema = googleSessionSchema
+  .extend({ scope: z.literal("sites") })
   .strict();
 const ratio = z.number().finite().min(0).max(1);
 export const targetSchema = z
@@ -119,8 +116,15 @@ export type Target = z.infer<typeof targetSchema>;
 export type FeedbackInput = z.infer<typeof feedbackSchema>;
 export interface FeedbackItem {
   id: string;
+  authorName?: string;
   target: Target;
   category: FeedbackInput["category"];
   comment: string;
   createdAt: string;
 }
+
+export const siteFeedbackQuerySchema = z
+  .object({ pageUrl: feedbackSchema.shape.pageUrl })
+  .strict();
+
+export const logoutSchema = z.object({}).strict();

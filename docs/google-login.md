@@ -1,6 +1,6 @@
 # Google login setup and acceptance
 
-A Google account is required. The popup uses a server-configured fixed review destination without invitation or nickname inputs. This implements the user's change to the original account-free draft. No dashboard or public deployment is involved.
+A Google account is required. The popup signs in once and supports any HTTP(S) site without invitations, session/app IDs, nicknames or a fixed destination. All authenticated users share feedback for the same exact origin and normalized path. This is the user-selected sharing policy; the API does not verify the user's access to the reviewed site's own accounts.
 
 ## Configure Google and the local API
 
@@ -12,24 +12,22 @@ A Google account is required. The popup uses a server-configured fixed review de
    ```dotenv
    GOOGLE_CLIENT_ID="<web-application-client-id>.apps.googleusercontent.com"
    GOOGLE_CLIENT_SECRET="<server-only-secret>"
-   DEFAULT_SESSION_ID="<existing review session ID>"
-   DEFAULT_APP_ID="<app ID in that session>"
    ```
 
    Do not paste the secret into chat or commit it. Future production configuration must use Worker secrets. No production deployment is authorized here.
 
-5. After editing `.dev.vars`, restart the local API so the new OAuth values are loaded; an API process started before the change can still report `AUTH_NOT_CONFIGURED`. Run `pnpm --filter @app-feedback/api migrate`, build the extension, and restart/reload it so the new `identity` permission and login code are loaded. Start the local API as described in README. The existing participant tokens cannot be reused without Google confirmation, but saved comments are retained.
+5. After editing `.dev.vars`, restart the local API so the new OAuth values are loaded; an API process started before the change can still report `AUTH_NOT_CONFIGURED`. Run `pnpm --filter @app-feedback/api migrate`, build the extension, and restart/reload it so the new `identity` permission and login code are loaded. Start the local API as described in README. Old session participant tokens cannot authorize site sharing; sign in again. Saved private session comments remain in legacy tables and are not automatically published to the new shared tables. No bootstrap or `DEFAULT_SESSION_ID` / `DEFAULT_APP_ID` configuration is needed.
 6. Click **Googleでログイン**. Complete Google account selection/consent yourself. Google passwords and second factors are entered only on Google's own pages. Once joined, **コメントを開く** returns to the ordinary review flow.
 
 ## Security and privacy
 
-The extension generates a 256-bit PKCE verifier in memory and uses `chrome.identity.getRedirectURL('google')` / `launchWebAuthFlow`. A five-minute server flow binds the destination session, current invite-hash revision, allowed redirect, state, nonce and S256 challenge. State, nonce and invite secrets are hashed at rest. Callback origin/path, state and duplicate parameters are checked before the returned code is sent to the API. Consuming the flow is atomic and prevents replay.
+The extension generates a 256-bit PKCE verifier in memory and uses `chrome.identity.getRedirectURL('google')` / `launchWebAuthFlow`. A five-minute server flow binds the allowed redirect, state, nonce and S256 challenge, independently of any site or session. State and nonce are hashed at rest. Callback origin/path, state and duplicate parameters are checked before the returned code is sent to the API. Consuming the flow is atomic and prevents replay.
 
 Only the API exchanges the code, using a fixed Google token endpoint and the server-only client secret. Redirect responses are not followed with that secret. `jose` verifies the ID token with Google's fixed public-key endpoint, allowing only RS256 and checking issuer, exact client audience/presenter, issued/expiry times and nonce. Client claims/roles never establish Google identity.
 
-Scope is `openid profile`; the display name comes from the signed Google `name` claim, bounded to 80 characters. Missing/empty names use `Googleユーザー`. No userinfo endpoint or extra Google request is needed. Google email/profile photos/access/refresh/ID tokens are not stored. The database retains a hash of the Google subject. Content scripts never receive Google credentials or app bearer tokens. After verification, ordinary app tokens last at most 24 hours and session expiry remains authoritative. Signing out of Google elsewhere does not immediately revoke an already issued app session; **ログアウト** revokes the app token when the API is reachable. If offline, local credentials are cleared and server expiry still bounds the token.
+Scope is `openid profile`; the display name comes from the signed Google `name` claim, bounded to 80 characters. Missing/empty names use `Googleユーザー`. No userinfo endpoint or extra Google request is needed. Google email/profile photos/access/refresh/ID tokens are not stored. The database retains a hash of the Google subject. Content scripts never receive Google credentials or app bearer tokens. After verification, site-sharing app tokens last 24 hours. Site data has no event/session expiry. Signing out of Google elsewhere does not immediately revoke an already issued app session; **ログアウト** revokes the app token when the API is reachable. If offline, local credentials are cleared and server expiry still bounds the token.
 
-The fixed login endpoints explicitly allow any Google-authenticated account into the operator-selected session/app. Google audience/test-user restrictions still apply. They do not grant access to other sessions. The server validates the configured app belongs to the session and the session is unexpired, then binds login to its current invite hash so changing it still invalidates an in-flight flow. The legacy invitation endpoints still validate the supplied invitation. Missing OAuth/destination configuration fails closed with 503. CORS and a hidden API URL are not an account allowlist; review this policy before future public hosting.
+The site login endpoints explicitly allow any Google-authenticated account to review any site. Google audience/test-user restrictions still apply. Missing OAuth configuration fails closed with 503. CORS and a hidden API URL are not an account allowlist. The server derives origin and normalized route from validated URLs; no site ID, role or ownership claim from a client grants extra privileges. The extension sends no reviewed page URL during login. Legacy invitation endpoints remain isolated for old private session access; neither their tokens nor old comments enter site sharing.
 
 ## Verification boundaries
 
@@ -39,4 +37,4 @@ The real-account acceptance is: cancel once and remain unjoined; complete Google
 
 Sources: [Google OpenID Connect server flow and token validation](https://developers.google.com/identity/openid-connect/openid-connect), [Google PKCE verifier/challenge guidance](https://developers.google.com/identity/protocols/oauth2/native-app), [Chrome Identity API and redirect URLs](https://developer.chrome.com/docs/extensions/reference/api/identity).
 
-Windows Chrome login was confirmed by the user before the fixed-destination/profile update. The updated no-input login, account-name and logout/relogin flow remains a human acceptance check. Windows copies need an extension reload after rebuilding/copying `dist`; the manifest key keeps the registered redirect stable.
+Windows Chrome login was confirmed by the user before the site-sharing update. The updated site-sharing login, account-name and logout/relogin flow remains a human acceptance check. Windows copies need an extension reload after rebuilding/copying `dist`; the manifest key keeps the registered redirect stable.

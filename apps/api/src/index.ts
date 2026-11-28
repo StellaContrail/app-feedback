@@ -1,3 +1,5 @@
+import { siteRoutes, siteAuthRoutes } from "./sites";
+import { budget } from "./rate-limit";
 import { Hono, type Context, type Next } from "hono";
 import {
   feedbackSchema,
@@ -9,7 +11,6 @@ import {
 import { hash, secret } from "./crypto";
 import {
   googleConfig,
-  fixedDestination,
   GoogleAuthError,
   startGoogleLogin,
   completeGoogleLogin,
@@ -106,65 +107,34 @@ app.use("/v1/*", async (c, next) => {
   }
   await next();
 });
-async function budget(
-  db: D1Database,
-  identity: string,
-  maximum: number,
-): Promise<boolean> {
-  const now = Date.now(),
-    window = Math.floor(now / 60000);
-  const bucket = await hash(`${identity}:${window}`);
-  await db
-    .prepare("DELETE FROM request_limits WHERE expires_at < ?")
-    .bind(now)
-    .run();
-  const row = await db
-    .prepare(
-      "INSERT INTO request_limits(bucket,attempts,expires_at) VALUES(?,1,?) ON CONFLICT(bucket) DO UPDATE SET attempts=attempts+1 RETURNING attempts",
-    )
-    .bind(bucket, (window + 2) * 60000)
-    .first<{ attempts: number }>();
-  return !!row && row.attempts <= maximum;
-}
-// Operators select the destination; Google authentication is always required.
+app.route("/v1/sites", siteRoutes);
+app.route("/v1/auth", siteAuthRoutes);
+// Site login authenticates an account, independent of any page or event.
 for (const phase of ["start", "join"] as const) {
   app.post(`/v1/auth/google/${phase}`, async (c) => {
     googleConfig(c.env);
-    const destination = await fixedDestination(c.env.DB, c.env);
     if (
       !(await budget(
         c.env.DB,
-        `fixed-google:${phase}:ip:${c.req.header("CF-Connecting-IP") ?? "local"}`,
+        `site-google:${phase}:ip:${c.req.header("CF-Connecting-IP") ?? "local"}`,
         10,
-      )) ||
-      !(await budget(
-        c.env.DB,
-        `fixed-google:${phase}:session:${destination.sessionId}`,
-        60,
       ))
     ) {
       c.header("Retry-After", "60");
       return c.json(error("RATE_LIMITED", "Try again later"), 429);
     }
-    if (phase === "start")
-      return c.json(
-        await startGoogleLogin(
-          c.env.DB,
-          c.env,
-          destination.sessionId,
-          c.get("body"),
-          c.req.header("Origin"),
-          true,
-        ),
-        201,
-      );
-    const result = await completeGoogleLogin(
-      c.env.DB,
-      c.env,
-      destination.sessionId,
-      c.get("body"),
+    return c.json(
+      phase === "start"
+        ? await startGoogleLogin(
+            c.env.DB,
+            c.env,
+            undefined,
+            c.get("body"),
+            c.req.header("Origin"),
+          )
+        : await completeGoogleLogin(c.env.DB, c.env, undefined, c.get("body")),
+      201,
     );
-    return c.json({ ...result, ...destination }, 201);
   });
 }
 app.post("/v1/sessions/:sessionId/google/start", async (c) => {

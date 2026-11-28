@@ -1,9 +1,13 @@
 import type { FeedbackInput } from "@app-feedback/shared";
+declare const __API_ORIGIN__: string;
+export const API_ORIGIN =
+  typeof __API_ORIGIN__ === "undefined"
+    ? "http://localhost:8787"
+    : __API_ORIGIN__;
 export interface Settings {
   authProvider: "google";
   apiUrl: string;
-  sessionId: string;
-  appId: string;
+  scope: "sites";
   token: string;
   expiresAt: string;
   displayName?: string;
@@ -24,15 +28,19 @@ export type Reply<T = unknown> =
 export function apiBase(raw: string): string {
   const url = new URL(raw);
   if (
-    url.protocol !== "http:" ||
-    !["localhost", "127.0.0.1"].includes(url.hostname) ||
+    !(
+      url.origin === API_ORIGIN ||
+      (API_ORIGIN === "http://localhost:8787" &&
+        url.protocol === "http:" &&
+        ["localhost", "127.0.0.1"].includes(url.hostname))
+    ) ||
     url.username ||
     url.password ||
     url.pathname !== "/" ||
     url.search ||
     url.hash
   )
-    throw new Error("Use a local API origin, e.g. http://localhost:8787");
+    throw new Error("API origin does not match this extension build");
   return url.origin;
 }
 export async function send<T>(message: Message): Promise<T> {

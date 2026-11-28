@@ -1,6 +1,7 @@
 import { feedbackSchema, pageIdentity } from "@app-feedback/shared";
 import {
   apiBase,
+  API_ORIGIN,
   type Message,
   type Settings,
   type ReviewMode,
@@ -16,10 +17,11 @@ async function settings(): Promise<Settings> {
   if (
     !settings ||
     settings.authProvider !== "google" ||
+    settings.scope !== "sites" ||
     !Number.isFinite(Date.parse(settings.expiresAt)) ||
     Date.parse(settings.expiresAt) <= Date.now()
   )
-    throw new Error("Join the session again");
+    throw new Error("Log in again");
   return settings as Settings;
 }
 async function request(
@@ -50,11 +52,16 @@ async function request(
   }
   return response.json();
 }
+async function tokenHash(token: string): Promise<string> {
+  const bytes = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token)),
+  );
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
 type ReviewTab = {
   origin: string;
   apiUrl: string;
-  sessionId: string;
-  appId: string;
+  participantTokenHash: string;
 };
 let revision = 0;
 let tabWrites: Promise<unknown> = Promise.resolve();
@@ -98,7 +105,7 @@ async function inject(
   // Authorize the route before showing UI, including automatic restoration.
   await request(
     config.apiUrl,
-    `/v1/apps/${encodeURIComponent(config.appId)}/feedback?${new URLSearchParams({ pageUrl, path: page.path })}`,
+    `/v1/sites/feedback?${new URLSearchParams({ pageUrl })}`,
     config.token,
   );
   const current = await chrome.tabs.get(tabId);
@@ -125,13 +132,13 @@ async function inject(
     await hide(tabId);
     return;
   }
+  const participantTokenHash = await tokenHash(config.token);
   await editTabs((tabs) => {
     if (revision === started)
       tabs[String(tabId)] = {
         origin: page.origin,
         apiUrl: config.apiUrl,
-        sessionId: config.sessionId,
-        appId: config.appId,
+        participantTokenHash,
       };
   });
 }
@@ -141,8 +148,7 @@ export async function restoreReview(tabId: number): Promise<void> {
   if (!tracked) return;
   const config = await settings();
   if (
-    config.sessionId !== tracked.sessionId ||
-    config.appId !== tracked.appId ||
+    (await tokenHash(config.token)) !== tracked.participantTokenHash ||
     config.apiUrl !== tracked.apiUrl
   )
     return;
@@ -184,13 +190,21 @@ export async function handle(
       currentWindow: true,
     });
     const tracked = tab?.id ? (await reviewTabs())[String(tab.id)] : undefined;
+    let active = false;
+    if (tracked && tab?.url) {
+      try {
+        active =
+          tracked.participantTokenHash === (await tokenHash(config.token)) &&
+          tracked.apiUrl === config.apiUrl &&
+          pageIdentity(tab.url).origin === tracked.origin;
+      } catch {
+        // Internal browser pages cannot display comments; login remains valid.
+      }
+    }
     return {
       joined: true,
       displayName: config.displayName ?? "レビュアー",
-      active:
-        !!tracked &&
-        tracked.appId === config.appId &&
-        tracked.sessionId === config.sessionId,
+      active,
     };
   }
   if (message.type === "disable") {
@@ -210,20 +224,17 @@ export async function handle(
   if (message.type === "join") {
     if (!popup) throw new Error("Popup required");
     const started = revision;
-    const base = apiBase("http://localhost:8787");
+    const base = apiBase(API_ORIGIN);
     const result = await joinWithGoogle(base, request);
     if (revision !== started) {
-      await request(base, "/v1/participants/logout", result.token, {}).catch(
-        () => {},
-      );
+      await request(base, "/v1/auth/logout", result.token, {}).catch(() => {});
       throw new GoogleLoginError("cancel");
     }
     await stopAll();
     await chrome.storage.session.set({
       settings: {
         apiUrl: base,
-        sessionId: result.sessionId,
-        appId: result.appId,
+        scope: result.scope,
         token: result.token,
         expiresAt: result.expiresAt,
         displayName: result.displayName,
@@ -243,12 +254,9 @@ export async function handle(
     await stopAll();
     await chrome.storage.session.clear();
     if (config)
-      await request(
-        config.apiUrl,
-        "/v1/participants/logout",
-        config.token,
-        {},
-      ).catch(() => {});
+      await request(config.apiUrl, "/v1/auth/logout", config.token, {}).catch(
+        () => {},
+      );
     return null;
   }
   const config = await settings();
@@ -258,7 +266,7 @@ export async function handle(
       active: true,
       currentWindow: true,
     });
-    if (!tab?.id || !tab.url) throw new Error("Open a registered HTTP(S) page");
+    if (!tab?.id || !tab.url) throw new Error("Open an HTTP(S) page");
     if (
       message.mode !== undefined &&
       message.mode !== "view" &&
@@ -285,13 +293,13 @@ export async function handle(
   if (message.type === "list")
     return request(
       config.apiUrl,
-      `/v1/apps/${encodeURIComponent(config.appId)}/feedback?${new URLSearchParams({ pageUrl, path: actual.path })}`,
+      `/v1/sites/feedback?${new URLSearchParams({ pageUrl })}`,
       config.token,
     );
   if (message.type === "post")
     return request(
       config.apiUrl,
-      `/v1/apps/${encodeURIComponent(config.appId)}/feedback`,
+      "/v1/sites/feedback",
       config.token,
       feedbackSchema.parse({ ...message.input, pageUrl }),
     );
@@ -311,7 +319,7 @@ chrome.runtime.onMessage.addListener((message: Message, sender, respond) => {
                 invalid:
                   "Googleログインを確認できませんでした。やり直してください。",
               }[error.kind]
-            : "操作できませんでした。参加情報・対象ページ・APIの起動を確認してください。",
+            : "操作できませんでした。ログイン状態・対象ページ・APIの起動を確認してください。",
       }),
     );
   return true;

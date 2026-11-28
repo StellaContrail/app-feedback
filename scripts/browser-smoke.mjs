@@ -32,7 +32,7 @@ const environment = { ...process.env, WRANGLER_SEND_METRICS: "false" };
 const fixture = createServer((_req, res) => {
   res.setHeader("Content-Type", "text/html");
   res.end(
-    `<!doctype html><html><head><title>${fixtureTitle}</title></head><body><h1>Review app</h1><a href="/app/other">Other route</a><a href="/outside">Outside scope</a><form action="/submitted"><button type="submit">Save</button><input type="password" value="never-store-this"></form><script>window.submissions=0;document.querySelector('form').addEventListener('submit',e=>{e.preventDefault();window.submissions++});</script></body></html>`,
+    `<!doctype html><html><head><title>${fixtureTitle}</title></head><body><h1>Review app</h1><a href="/app/other">Other route</a><a href="/outside">Another page</a><form action="/submitted"><button type="submit">Save</button><input type="password" value="never-store-this"></form><script>window.submissions=0;document.querySelector('form').addEventListener('submit',e=>{e.preventDefault();window.submissions++});</script></body></html>`,
   );
 });
 async function waitUntil(check, label) {
@@ -184,8 +184,6 @@ try {
     "--persist-to",
     persistence,
   ]);
-  const inviteCode = randomBytes(32).toString("hex"),
-    admin = randomBytes(32).toString("hex");
   const hash = (s) => createHash("sha256").update(s).digest("hex");
   const participantTokens = {
     "Reviewer A": randomBytes(32).toString("hex"),
@@ -193,24 +191,15 @@ try {
   };
   const participantExpiry = new Date(Date.now() + 3600000).toISOString();
   const sqlFile = join(temporary, "seed.sql");
-  await writeFile(
-    sqlFile,
-    `INSERT INTO sessions(id,name,invite_secret_hash,admin_secret_hash,expires_at) VALUES('smoke-session','Smoke','${hash(inviteCode)}','${hash(admin)}','${new Date(Date.now() + 3600000).toISOString()}');\nINSERT INTO apps(id,session_id,name,origin,base_path) VALUES('smoke-app','smoke-session','Fixture','${fixtureUrl}','/app');`,
-    { mode: 0o600 },
-  );
   // Test-only DB fixtures establish already-authenticated app sessions. No
   // production auth bypass is available; real Google login is tested separately.
   const fixtureSql = Object.entries(participantTokens)
     .map(
       ([name, token], index) =>
-        `INSERT INTO participants(id,session_id,display_name,token_hash,expires_at,google_subject_hash) VALUES('smoke-reviewer-${index}','smoke-session','${name}','${hash(token)}','${participantExpiry}','${hash("google:test-" + index)}');`,
+        `INSERT INTO site_participants(id,display_name,token_hash,expires_at,google_subject_hash) VALUES('smoke-reviewer-${index}','${name}','${hash(token)}','${participantExpiry}','${hash("google:test-" + index)}');`,
     )
     .join("\n");
-  await writeFile(
-    sqlFile,
-    (await readFile(sqlFile, "utf8")) + "\n" + fixtureSql,
-    { mode: 0o600 },
-  );
+  await writeFile(sqlFile, fixtureSql, { mode: 0o600 });
   wrangler([
     "d1",
     "execute",
@@ -263,8 +252,7 @@ try {
       {
         authProvider: "google",
         apiUrl,
-        sessionId: "smoke-session",
-        appId: "smoke-app",
+        scope: "sites",
         token: participantTokens[name],
         expiresAt: participantExpiry,
         displayName: name,
@@ -375,9 +363,9 @@ try {
   }
   const reviewerA = await reviewer(a, "Reviewer A");
   assert.equal(
-    await reviewerA.popup.locator("form").count(),
+    await reviewerA.popup.locator("form:visible").count(),
     0,
-    "Joined popup hides all join fields",
+    "Joined popup hides forms until explicitly opened",
   );
   assert.equal(
     await reviewerA.popup.locator(".actions > button").count(),
@@ -395,7 +383,7 @@ try {
   assert.equal(reviewerA.page.url(), `${fixtureUrl}/app`);
   await shadow(
     reviewerA.page,
-    "this.querySelector('textarea').value='Two-profile feedback';this.querySelector('form').requestSubmit();",
+    "this.querySelector('.category-picker input[value=bug]').click();this.querySelector('textarea').value='Two-profile feedback';this.querySelector('form').requestSubmit();",
   );
   await waitUntil(
     async () =>
@@ -431,6 +419,21 @@ try {
       () => document.querySelector("app-feedback-ui").shadowRoot,
     ),
     null,
+  );
+  assert.equal(
+    await shadow(
+      reviewerB.page,
+      "return this.querySelector('.comment-author').textContent",
+    ),
+    "Reviewer A",
+  );
+  await waitUntil(
+    async () =>
+      (await shadow(
+        reviewerB.page,
+        "return getComputedStyle(this.querySelector('.pin')).backgroundColor",
+      )) === "rgb(185, 74, 72)",
+    "Bug pin settles to red after its color transition",
   );
   // Real pointer actions exercise list -> target -> pin detail and the clipboard.
   await reviewerB.page.bringToFront();
@@ -481,6 +484,13 @@ try {
       ),
     ).includes("Two-profile feedback"),
   );
+  assert.equal(
+    await shadow(
+      reviewerB.page,
+      "return this.querySelector('.feedback-preview .comment-author').textContent",
+    ),
+    "Reviewer A",
+  );
   await shadow(
     reviewerB.page,
     "this.querySelector('.feedback-preview .panel-close').click()",
@@ -506,7 +516,10 @@ try {
     const exported = JSON.parse(copied);
     assert.equal(exported.pageUrl, fixtureUrl + "/app");
     assert.equal(exported.feedback[0].comment, "Two-profile feedback");
-    for (const secret of [inviteCode, admin, "never-store-this"])
+    for (const secret of [
+      ...Object.values(participantTokens),
+      "never-store-this",
+    ])
       assert.ok(!copied.includes(secret));
   }
   await reviewerB.page.evaluate(() => {
@@ -569,9 +582,16 @@ try {
     "Back navigation restores pins without popup action",
   );
   await reviewerB.page.goto(`${fixtureUrl}/outside`);
-  // A server-authorized base path is mandatory even with an existing opt-in.
-  await new Promise((r) => setTimeout(r, 600));
-  assert.equal(await reviewerB.page.locator("app-feedback-ui").count(), 0);
+  // Every path on this origin is supported, with its own comment list.
+  await reviewerB.page.locator("app-feedback-ui").waitFor();
+  await waitUntil(
+    async () =>
+      (await shadow(
+        reviewerB.page,
+        "return this.querySelectorAll('li').length",
+      )) === 0,
+    "Another same-origin path restores an empty list",
+  );
   await reviewerB.page.goBack();
   await reviewerB.page.locator("app-feedback-ui").waitFor();
   // A host page can replace/remove injected DOM. Selection must then release
@@ -668,6 +688,46 @@ try {
       "PASS: activeTab retained on same-origin SPA/reload and revoked after cross-origin navigation.",
     );
   }
+  // Capture the requested Issue URL at the tab API boundary, then open a
+  // local fixture instead. This tests tab creation without contacting GitHub.
+  await reviewerA.popup.evaluate((fixtureUrl) => {
+    const create = chrome.tabs.create.bind(chrome.tabs);
+    chrome.tabs.create = async (options) => {
+      chrome.tabs.create = create;
+      globalThis.__feedbackIssueUrl = options.url;
+      return create({ url: fixtureUrl + "/issue-editor-test" });
+    };
+  }, fixtureUrl);
+  await reviewerA.popup
+    .getByText("この拡張機能にフィードバック", { exact: true })
+    .click();
+  const extensionReport = "拡張機能のフィードバック導線を試す";
+  await reviewerA.popup.getByLabel("気づいたこと").fill(extensionReport);
+  const issuePagePromise = a.context.waitForEvent("page");
+  await reviewerA.popup
+    .getByRole("button", { name: "GitHubで確認する", exact: true })
+    .click();
+  const issuePage = await issuePagePromise;
+  await issuePage.waitForURL(fixtureUrl + "/issue-editor-test");
+  const issueUrl = new URL(
+    await reviewerA.popup.evaluate(() => globalThis.__feedbackIssueUrl),
+  );
+  assert.equal(
+    issueUrl.origin + issueUrl.pathname,
+    "https://github.com/StellaContrail/app-feedback/issues/new",
+  );
+  assert.equal(
+    issueUrl.searchParams.get("title"),
+    `[拡張機能] ${extensionReport}`,
+  );
+  assert.ok(issueUrl.searchParams.get("body").includes(extensionReport));
+  assert.ok(!issueUrl.searchParams.get("body").includes(fixtureUrl));
+  assert.ok(!issueUrl.searchParams.get("body").includes("Reviewer A"));
+  assert.equal(Array.from(issueUrl.searchParams.keys()).length, 2);
+  await issuePage.close();
+  console.log(
+    "PASS: extension feedback opens a prefilled Issue editor without site/account data; tab redirected locally, no GitHub request or Issue created.",
+  );
   const stored = wrangler([
     "d1",
     "execute",
@@ -676,12 +736,12 @@ try {
     "--persist-to",
     persistence,
     "--command",
-    "SELECT * FROM feedback",
+    "SELECT * FROM site_feedback",
     "--json",
   ]);
   assert.ok(!stored.includes("never-store-this"));
-  assert.ok(!stored.includes(inviteCode));
-  assert.ok(!stored.includes(admin));
+  for (const token of Object.values(participantTokens))
+    assert.ok(!stored.includes(token));
   assert.ok(stored.includes("Two-profile feedback"));
   console.log(
     "PASS: two Chrome profiles use seeded authenticated sessions, A selects/posts without form submission, B sees pin after reload; joined popup, list target jumps/highlights, pin detail, " +

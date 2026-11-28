@@ -8,6 +8,7 @@ export const iconPaths = {
     "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z",
     "M12 2v3m0 14v3M2 12h3m14 0h3M5 5l2 2m10 10 2 2M5 19l2-2M17 7l2-2",
   ],
+  logout: ["M9 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h4", "M10 12h10m-4-4 4 4-4 4"],
   chevron: ["m7 10 5 5 5-5"],
 };
 export type IconName = keyof typeof iconPaths;

@@ -78,6 +78,53 @@ describe("selection lifecycle", () => {
       }),
     );
   });
+  it("offers three visible category choices and submits the selected choice without submitting on change", async () => {
+    const t = transport();
+    cleanup = mount(t, { mode: "select" });
+    await flush();
+    document
+      .querySelector("button")!
+      .dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true }),
+      );
+    expect(root.querySelector("select")).toBeNull();
+    expect(root.querySelector("details")).toBeNull();
+    const options = root.querySelectorAll<HTMLInputElement>(
+      '.category-picker input[type="radio"]',
+    );
+    expect(Array.from(options, (option) => option.value)).toEqual([
+      "bug",
+      "suggestion",
+      "praise",
+    ]);
+    expect(
+      root.querySelector<HTMLInputElement>(".category-picker input:checked")!
+        .value,
+    ).toBe("suggestion");
+    for (const value of ["bug", "praise", "suggestion", "bug"]) {
+      root
+        .querySelector<HTMLInputElement>(
+          `.category-picker input[value="${value}"]`,
+        )!
+        .click();
+      expect(
+        root.querySelectorAll(".category-picker input:checked"),
+      ).toHaveLength(1);
+      expect(
+        root.querySelector<HTMLInputElement>(".category-picker input:checked")!
+          .value,
+      ).toBe(value);
+      expect(t.post).not.toHaveBeenCalled();
+    }
+    root.querySelector("textarea")!.value = "Category selection";
+    root
+      .querySelector("form")!
+      .dispatchEvent(new Event("submit", { cancelable: true }));
+    await flush();
+    expect(t.post).toHaveBeenCalledWith(
+      expect.objectContaining({ category: "bug" }),
+    );
+  });
   it("keeps one UI, cancels with Escape and cleans up on explicit close", async () => {
     const t = transport();
     const first = mount(t, { mode: "select" });
@@ -338,6 +385,7 @@ function savedFeedback(): FeedbackItem {
     target: captureTarget(document.querySelector("a")!)!,
     category: "bug",
     comment: "Saved comment <img src=x>",
+    authorName: "Reviewer <img src=x onerror=alert(1)>",
     createdAt: "2026-11-26T00:00:00.000Z",
   };
 }
@@ -394,6 +442,12 @@ it("pins open a text-only detail card and keep highlighting aligned with layout 
   const preview = root.querySelector<HTMLElement>(".feedback-preview")!;
   expect(preview.hidden).toBe(false);
   expect(preview.textContent).toContain(item.comment);
+  expect(preview.querySelector(".comment-author")!.textContent).toBe(
+    item.authorName,
+  );
+  expect(root.querySelector(".comment-meta .comment-author")!.textContent).toBe(
+    item.authorName,
+  );
   expect(preview.querySelector("img")).toBeNull();
   expect(root.querySelector("li")!.classList.contains("is-active")).toBe(true);
   visibleTarget(80);
@@ -451,4 +505,25 @@ it("copies feedback with one click, reports denial and does not copy an old rout
   window.history.pushState({}, "", "/other");
   button.click();
   expect(writeText).toHaveBeenCalledTimes(2);
+});
+
+it("keeps category labels and numbers accessible while distinguishing each pin", async () => {
+  visibleTarget();
+  const items = (["bug", "suggestion", "praise"] as const).map(
+    (category, index) => ({ ...savedFeedback(), id: String(index), category }),
+  );
+  cleanup = mount(transport(items));
+  await flush();
+  const pins = Array.from(root.querySelectorAll<HTMLButtonElement>(".pin"));
+  expect(pins.map((pin) => pin.dataset.category)).toEqual([
+    "bug",
+    "suggestion",
+    "praise",
+  ]);
+  expect(pins.map((pin) => pin.textContent)).toEqual(["1", "2", "3"]);
+  expect(pins.map((pin) => pin.getAttribute("aria-label"))).toEqual([
+    "コメント 1・不具合",
+    "コメント 2・提案",
+    "コメント 3・よかった点",
+  ]);
 });

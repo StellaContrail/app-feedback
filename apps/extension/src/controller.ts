@@ -49,25 +49,37 @@ export function mount(
   form.hidden = true;
   const label = document.createElement("label");
   label.textContent = "コメント";
+  const sharing = document.createElement("p");
+  sharing.textContent = "このサイトを使う全利用者に共有されます。";
 
   const comment = document.createElement("textarea");
   comment.placeholder = "気づいたことを書いてください";
   comment.maxLength = 2000;
   comment.required = true;
   label.append(comment);
-  const category = document.createElement("select");
-  category.setAttribute("aria-label", "種類");
-  for (const value of ["bug", "suggestion", "praise"]) {
-    const option = document.createElement("option");
-    option.value = value;
-    option.textContent = categoryNames[value];
-    category.append(option);
+  const categories = document.createElement("fieldset");
+  categories.className = "category-picker";
+  const legend = document.createElement("legend");
+  legend.textContent = "種類";
+  categories.append(legend);
+  let selectedCategory: FeedbackInput["category"] = "suggestion";
+  for (const value of ["bug", "suggestion", "praise"] as const) {
+    const option = document.createElement("label");
+    option.className = "category-option";
+    option.dataset.category = value;
+    const input = document.createElement("input");
+    input.type = "radio";
+    input.name = "category";
+    input.value = value;
+    input.checked = value === selectedCategory;
+    input.onchange = () => {
+      if (input.checked) selectedCategory = value;
+    };
+    const caption = document.createElement("span");
+    caption.textContent = categoryNames[value];
+    option.append(input, caption);
+    categories.append(option);
   }
-  category.value = "suggestion";
-  const extra = document.createElement("details");
-  const summary = document.createElement("summary");
-  summary.textContent = "種類を選ぶ（任意）";
-  extra.append(summary, category);
   const cancel = document.createElement("button");
   cancel.type = "button";
   cancel.textContent = "キャンセル";
@@ -78,7 +90,7 @@ export function mount(
   const formActions = document.createElement("div");
   formActions.className = "form-actions";
   formActions.append(submit, cancel);
-  form.append(label, extra, formActions);
+  form.append(sharing, label, categories, formActions);
   const highlight = document.createElement("div");
   highlight.className = "highlight";
   highlight.hidden = true;
@@ -96,6 +108,7 @@ export function mount(
       action: HTMLButtonElement;
       number: HTMLSpanElement;
       category: HTMLSpanElement;
+      author: HTMLSpanElement;
       body: HTMLSpanElement;
       note: HTMLSpanElement;
       pin: HTMLButtonElement;
@@ -106,6 +119,8 @@ export function mount(
   preview.setAttribute("aria-label", "選択したコメント");
   preview.hidden = true;
   const previewTitle = document.createElement("strong");
+  const previewAuthor = document.createElement("p");
+  previewAuthor.className = "comment-author";
   const previewBody = document.createElement("p");
   previewBody.className = "comment-body";
   const previewClose = document.createElement("button");
@@ -120,7 +135,7 @@ export function mount(
   const previewHeader = document.createElement("header");
   previewHeader.className = "panel-header";
   previewHeader.append(previewTitle, previewClose);
-  preview.append(previewHeader, previewBody);
+  preview.append(previewHeader, previewAuthor, previewBody);
   const copy = document.createElement("button");
   copy.type = "button";
   copy.className = "copy-action";
@@ -252,6 +267,7 @@ export function mount(
     preview.hidden = true;
     previewBody.textContent = "";
     previewTitle.textContent = "";
+    previewAuthor.textContent = "";
     if (!selecting) highlight.hidden = true;
     const ids = new Set(items.map((item) => item.id));
     for (const [id, entry] of entries) {
@@ -278,19 +294,21 @@ export function mount(
         body.className = "comment-body";
         const note = document.createElement("span");
         note.className = "unavailable";
-        meta.append(number, category);
+        const author = document.createElement("span");
+        author.className = "comment-author";
+        meta.append(number, category, author);
         action.append(meta, body, note);
         row.append(action);
         const pin = document.createElement("button");
         pin.type = "button";
         pin.className = "pin";
         pin.onclick = () => reveal(item.id, false);
-        entry = { row, action, number, category, body, note, pin };
+        entry = { row, action, number, category, author, body, note, pin };
         entries.set(item.id, entry);
         list.append(row);
         pins.append(pin);
       }
-      const { row, action, number, category, body, note, pin } = entry;
+      const { row, action, number, category, author, body, note, pin } = entry;
       if (list.children[index] !== row)
         list.insertBefore(row, list.children[index] ?? null);
       row.dataset.category = item.category;
@@ -300,6 +318,8 @@ export function mount(
       action.disabled = pin.disabled = !form.hidden;
       number.textContent = "#" + (index + 1);
       category.textContent = categoryNames[item.category];
+      author.textContent = item.authorName || "Googleユーザー";
+      author.title = author.textContent;
       body.textContent = item.comment;
       const el = resolveTarget(item.target),
         rect = el?.getBoundingClientRect();
@@ -320,7 +340,11 @@ export function mount(
       note.textContent = "対象が見つかりません";
       pin.hidden = !visible;
       pin.textContent = String(index + 1);
-      pin.setAttribute("aria-label", "Feedback " + (index + 1));
+      pin.dataset.category = item.category;
+      pin.setAttribute(
+        "aria-label",
+        `コメント ${index + 1}・${categoryNames[item.category]}`,
+      );
       pin.setAttribute("aria-pressed", String(active));
       if (visible) {
         pin.style.left =
@@ -338,6 +362,7 @@ export function mount(
           preview.hidden = false;
           previewTitle.textContent =
             "#" + (index + 1) + " · " + categoryNames[item.category];
+          previewAuthor.textContent = item.authorName || "Googleユーザー";
           previewBody.textContent = item.comment;
           preview.style.left =
             Math.max(8, Math.min(innerWidth - 296, rect!.left)) + "px";
@@ -482,7 +507,7 @@ export function mount(
       await transport.post({
         pageUrl: page,
         target,
-        category: category.value as FeedbackInput["category"],
+        category: selectedCategory,
         comment: comment.value.trim(),
       });
       if (syncPage() !== "ready" || selected !== target || page !== currentPage)

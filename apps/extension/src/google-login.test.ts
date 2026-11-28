@@ -10,8 +10,7 @@ const session = {
   expiresAt: "2099-01-01T00:00:00.000Z",
   authProvider: "google",
   displayName: "Google Name",
-  sessionId: "s1",
-  appId: "a1",
+  scope: "sites",
 };
 beforeEach(() => {
   vi.stubGlobal("chrome", {
