@@ -88,7 +88,7 @@ micromamba create --prefix "$PWD/.local/browser-tools" --channel conda-forge --o
 XVFB_PATH="$PWD/.local/browser-tools/bin/Xvfb" pnpm test:permissions
 ```
 
-一時ディスプレイ、プロファイル、manifest、D1 は終了時に削除します。このテストはネイティブ依存があるため通常のテスト・CI には含めません。残る実アカウント・実アプリの確認は[手動受入手順](docs/manual-test.md)を参照してください。
+一時ディスプレイ、プロファイル、manifest、D1 は終了時に削除します。このテストはネイティブ依存があるため PR の必須チェックから分離し、`Extension permissions` ワークフローで週次・手動実行します。残る実アカウント・実アプリの確認は[手動受入手順](docs/manual-test.md)を参照してください。
 
 ## 制約
 
@@ -99,3 +99,5 @@ XVFB_PATH="$PWD/.local/browser-tools/bin/Xvfb" pnpm test:permissions
 - 読み取りはルートごとの最新500件を時系列順で返します。削除・管理・失効 UI、包括的なエクスポート、一般配布、管理されたデプロイは後続課題です。旧招待・セッションのテーブルと API は互換性のためサイト共有から分離して残します。
 
 API の詳細は [API 契約](docs/api-contract.md)、今後の範囲は[実装計画](docs/implementation-plan.md)を参照してください。構成は `packages/shared`（Zod・正規化・型）、`apps/api`（Hono・D1）、`apps/extension`（ポップアップ・分離 UI・通信）、`scripts/browser-smoke.mjs`（ブラウザー検証）です。
+
+PR の CI は通常の検証に加え、Chrome のブラウザーテスト、実ビルドの ZIP 化、生成 manifest の権限許可リスト、追跡ファイルの機密設定・認証情報パターン、Git 履歴の Gitleaks スキャン、actionlint によるワークフローとシェルの検証を実行します。Chrome は Ubuntu runner のインストール済みバイナリを使用します。機密情報スキャンは未知の本番 URL や個人情報を完全には識別できないため、公開前の差分確認も必要です。追加ジョブをマージ条件にする場合は `workflow-validation` と `secret-scan` も必須チェックに指定してください。
