@@ -102,7 +102,7 @@ API の詳細は [API 契約](docs/api-contract.md)、今後の範囲は[実装�
 
 PR の CI は通常の検証に加え、Chrome のブラウザーテスト、実ビルドの ZIP 化、生成 manifest の権限許可リスト、追跡ファイルの機密設定・認証情報パターン、Git 履歴の Gitleaks スキャン、actionlint によるワークフローとシェルの検証を実行します。Chrome は Ubuntu runner のインストール済みバイナリを使用します。機密情報スキャンは未知の本番 URL や個人情報を完全には識別できないため、公開前の差分確認も必要です。追加ジョブをマージ条件にする場合は `workflow-validation` と `secret-scan` も必須チェックに指定してください。
 
-Dependabot が PR を作れない npm のアラートには [fallback repair](.github/workflows/dependabot-repair.yml) を使用できます。既定は無効です。承認後、リポジトリ変数 `DEPENDABOT_REPAIR_ENABLED=true` と secret `DEPENDABOT_REPAIR_TOKEN` を設定します。トークンはこのリポジトリ限定の fine-grained PAT とし、Dependabot alerts の read、Contents と Pull requests の read/write を付与します。通常の PR CI を起動するため、PR 作成に `GITHUB_TOKEN` は使いません。検出・依存更新と検証・公開は別の runner に分離し、トークンは検出・公開ステップだけに渡します。検証後は依存ファイルの差分だけを転送し、同じコミットの新しい checkout で適用します。スクリプト変更、ファイル追加・削除、モード変更を含む差分は公開しません。公開直前にアラートと重複 PR を再確認します。
+Dependabot が PR を作れない npm のアラートには [fallback repair](.github/workflows/dependabot-repair.yml) を使用できます。既定は無効です。承認後、リポジトリ変数 `DEPENDABOT_REPAIR_ENABLED=true` と secret `DEPENDABOT_REPAIR_TOKEN` を設定します。トークンはこのリポジトリ限定の fine-grained PAT とし、Dependabot alerts の read、Contents と Pull requests の read/write を付与します。通常の PR CI を起動するため、PR 作成に `GITHUB_TOKEN` は使いません。検出・依存更新と検証・公開は別の runner に分離し、トークンは検出・公開ステップだけに渡します。検証後は依存ファイルの差分だけを転送します。各 job は `main` を直接 checkout し、検出時のコミットとの一致を検証します。処理中に `main` が進んだ場合は停止するため、再実行が必要です。検証 job で共有の依存キャッシュは復元・保存しません。スクリプト変更、ファイル追加・削除、モード変更を含む差分は公開しません。公開直前にアラートと重複 PR を再確認します。
 
 週次・手動実行で、作成から24時間以上経過した未修正アラートを1件だけ試みます。既存 PR に同じ advisory、アラート URL、修正ブランチがある場合、または Dependabot PR に同じパッケージ名がある場合は除外します。Dependabot の失敗状態を直接検出する仕組みではなく、PR のないアラートへの補完です。直接の親を現行のバージョン範囲内で更新し、対象 advisory が残れば最新バージョンまで更新します。Wrangler と Workers テストプールは同時に更新します。override やソースコード修正は行いません。
 

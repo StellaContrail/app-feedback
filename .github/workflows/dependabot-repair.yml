@@ -50,17 +50,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.discover.outputs.base_sha }}
+          ref: main
           persist-credentials: false
+      - name: Verify main still matches the recorded repair base
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_BASE_SHA"
+        env:
+          EXPECTED_BASE_SHA: ${{ needs.discover.outputs.base_sha }}
       - uses: actions/download-artifact@v4
         with:
           name: repair-plan
           path: ${{ runner.temp }}/plan
       - uses: pnpm/action-setup@v4
+      # Do not restore or save shared dependency caches for repair candidates.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
       - name: Repair and validate without repository credentials
         run: |
           pnpm install --frozen-lockfile
@@ -90,8 +94,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.discover.outputs.base_sha }}
+          ref: main
           persist-credentials: false
+      - name: Verify main still matches the recorded repair base
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_BASE_SHA"
+        env:
+          EXPECTED_BASE_SHA: ${{ needs.discover.outputs.base_sha }}
       - uses: actions/download-artifact@v4
         with:
           name: repair-plan
