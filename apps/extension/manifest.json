@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "App Feedback (local)",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Shared feedback on website elements.",
   "permissions": ["activeTab", "scripting", "storage", "identity"],
   "host_permissions": ["http://localhost/*", "http://127.0.0.1/*"],
