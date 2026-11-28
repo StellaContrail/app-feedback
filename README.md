@@ -68,6 +68,12 @@ pnpm test:permissions
 
 `pnpm test` は単体・DOM・初期データ生成の認証情報ファイルテストに加え、Workers ランタイム内の実 SQLite / D1 でマイグレーションと API を検証します。ストレージはテストごとに分離します。`pnpm build` は拡張機能のビルドと Worker のドライランのみで、CI も認証情報やデプロイを必要としません。一部のサンドボックスでは workerd / Chrome の起動とループバックのポート使用に許可が必要です。
 
+拡張機能のリリース候補は [Extension release candidate](.github/workflows/extension-release.yml) が `main` への `apps/extension/manifest.json` の変更で自動生成します。バージョンを更新してマージすると、lint・型チェック・D1 統合テストを含むテスト・ビルド・パッケージ化の成功後に `extension-v<バージョン>` タグを作成します。既存タグは移動せず、別コミットで同じバージョンを再使用すると失敗します。manifest のバージョンを使った ZIP と SHA-256 を、タグ・コミット SHA 付きの Actions artifact に7日間保持します。タグ作成には `contents: write` を使用します。リポジトリのタグ保護規則がある場合は GitHub Actions にタグ作成を許可する必要があります。
+
+既存タグの再ビルドは `main` から手動実行し、`extension-v0.1.5` のようなタグを指定します。タグのコミットが実行対象の `main` に含まれることと manifest のバージョンの一致を確認して、そのコミットをビルドします。ZIP のルートに manifest があり、展開したディレクトリを Chrome に読み込めます。タグ作成後に artifact の保存が失敗した場合も、手動実行で再生成できます。
+
+このパイプラインは localhost 接続用です。本番接続先を含む生成物を公開しないため、接続先の入力や本番設定の読み込みは行いません。既存の manifest key を維持します。GitHub Release 作成、Chrome Web Store 公開、サーバーのデプロイは行いません。本番向け配布は接続先の開示範囲と配布方法の承認が必要です。ローカルでのパッケージ検証は `pnpm build` 後に `node scripts/package-extension.mjs` を実行します（`zip` が必要）。Actions 上の検証後も、実 Google ログインと2プロファイルでの手動受入は残ります。
+
 Dependabot が作成した同一リポジトリ内の `main` 向け PR は、更新種別を問わず CI の `checks` 成功後に squash 自動マージを有効にします。検証したコミットと PR の最新コミットが一致することを確認します。GitHub 側で Allow auto-merge と squash マージを有効にし、`main` の必須ステータスチェックに `checks` を指定する必要があります。追加の必須レビューなどがあれば、その条件も満たすまで待機します。
 
 ブラウザーテストは一時 D1・2つの一時 Chrome プロファイルに Google 認証済み参加者を投入し、投稿・ピン共有・ルート分離・復元・明示的な非表示・セレクター劣化・二重挿入・ホスト削除・CSS 分離・Escape・機密データ非保存を検証します。終了時に一時データを削除し、スクリーンショットや公開は行いません。実際の Google 同意は検証せず、署名・state・PKCE・異常系は生成鍵と Google 応答のモックで検証します。製品に認証回避用エンドポイント・フラグはありません。
