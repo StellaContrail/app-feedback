@@ -7,6 +7,7 @@ permissions:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -19,8 +20,33 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+      - run: node scripts/validate-ci.mjs
+      - name: Scan generated extension and Worker for credentials
+        run: |
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.24.3 dir /repo/apps/extension/dist --config /repo/.gitleaks.toml --redact --no-banner
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.24.3 dir /repo/apps/api/dist --config /repo/.gitleaks.toml --redact --no-banner
+      - run: node scripts/package-extension.mjs
+      - run: pnpm test:browser
+  workflow-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate workflows and embedded shell with actionlint
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 -color
+  secret-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan Git history for credentials
+        run: |
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.24.3 git /repo --config /repo/.gitleaks.toml --redact --no-banner
   dependabot-auto-merge:
-    needs: checks
+    needs: [checks, workflow-validation, secret-scan]
     if: >-
       github.event_name == 'pull_request' &&
       github.repository == 'StellaContrail/app-feedback' &&

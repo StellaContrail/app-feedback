@@ -1,0 +1,8 @@
+[extend]
+useDefault = true
+
+# Chrome extension identity is a public RSA key, not an authentication secret.
+[allowlist]
+description = "Exact public Chrome extension identity key"
+regexTarget = "secret"
+regexes = ['''^MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAw2ZMGko57wu7Lmuljk0cRIBCnO3FEq9NzaMfBF3HY\+H5/UAuSoEInw9OAClcPCsHdrfg5N\+3jrQOvs29nd9Rz\+rJj/VLgcfNt\+ZpF9d3Frg/rSgqV4yz1PIsZ846aSzF1Hf91d8rktUYGiFIWCrj7EtS2eLJ21nCHf9z\+uSWAPWFtZJC/3Xh90Pya0pcsJWdrkppT8n\+mjzKUvRwWgRl6elsmBUJf3FmhYN0zAzAHI0GgSza4niIOALXJdstbpyyr82fvsfMTVeZI09Ibhnp2muOb5sypdWeiZup9\+QfIQAL/DrHdG/pgRePT\+a7biJLRKt7scpOcbfFausSgDPr9wIDAQAB$''']

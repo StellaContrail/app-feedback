@@ -7,7 +7,7 @@
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r test && node --test scripts/bootstrap.test.mjs scripts/package-extension.test.mjs",
+    "test": "pnpm -r test && node --test scripts/bootstrap.test.mjs scripts/package-extension.test.mjs scripts/validate-ci.test.mjs",
     "build": "pnpm -r build",
     "test:browser": "pnpm --filter @app-feedback/extension build && node scripts/browser-smoke.mjs",
     "demo": "node scripts/demo.mjs",
